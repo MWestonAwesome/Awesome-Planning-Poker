@@ -1,0 +1,44 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null
+        && request.auth.token.firebase.sign_in_provider == "google.com";
+    }
+
+    function room(roomId) {
+      return get(/databases/$(database)/documents/rooms/$(roomId));
+    }
+
+    function isHost(roomId) {
+      return signedIn() && room(roomId).data.hostUid == request.auth.uid;
+    }
+
+    match /rooms/{roomId} {
+      allow read: if signedIn();
+
+      allow create: if signedIn()
+        && request.resource.data.hostUid == request.auth.uid
+        && request.resource.data.revealed == false
+        && request.resource.data.round == 1;
+
+      allow update: if isHost(roomId);
+      allow delete: if false;
+
+      match /participants/{userId} {
+        allow read: if signedIn();
+
+        allow create: if signedIn()
+          && request.auth.uid == userId
+          && request.resource.data.uid == request.auth.uid;
+
+        allow update: if signedIn() && (
+          (request.auth.uid == userId && request.resource.data.uid == request.auth.uid)
+          || isHost(roomId)
+        );
+
+        allow delete: if signedIn() && (request.auth.uid == userId || isHost(roomId));
+      }
+    }
+  }
+}

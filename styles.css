@@ -1,0 +1,310 @@
+:root {
+  --bg: #f4f7fb;
+  --panel: #ffffff;
+  --ink: #14213d;
+  --muted: #5f6b7b;
+  --accent: #005f73;
+  --accent-2: #0a9396;
+  --danger: #ae2012;
+  --line: #dce3ed;
+  --vote: #e9d8a6;
+  --voted: #94d2bd;
+  --host: #ee9b00;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  font-family: "Space Grotesk", sans-serif;
+  color: var(--ink);
+  background:
+    radial-gradient(circle at 0% 0%, #d9f0ff 0%, transparent 38%),
+    radial-gradient(circle at 100% 100%, #b7e4c7 0%, transparent 36%),
+    var(--bg);
+}
+
+h1,
+h2,
+h3,
+p {
+  margin: 0;
+}
+
+.app-shell {
+  width: min(920px, 92vw);
+  margin: 1.5rem auto 3rem;
+  display: grid;
+  gap: 1rem;
+}
+
+.hero h1 {
+  font-size: clamp(1.9rem, 4.5vw, 2.8rem);
+  letter-spacing: 0.02em;
+}
+
+.hero p {
+  color: var(--muted);
+  margin-top: 0.45rem;
+  max-width: 60ch;
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 1rem;
+  box-shadow: 0 10px 30px rgba(20, 33, 61, 0.08);
+}
+
+.hidden {
+  display: none !important;
+}
+
+.status {
+  border-radius: 10px;
+  border: 1px solid #ffd6a5;
+  background: #fff7e6;
+  color: #7f5539;
+  padding: 0.7rem 0.8rem;
+}
+
+.entry-form {
+  margin-top: 0.8rem;
+  display: grid;
+  gap: 0.6rem;
+  max-width: 360px;
+}
+
+.auth-buttons {
+  margin-top: 0.8rem;
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+label {
+  font-size: 0.95rem;
+}
+
+input {
+  font: inherit;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 0.65rem 0.75rem;
+}
+
+button {
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+  padding: 0.65rem 0.9rem;
+  background: var(--accent);
+  color: #fff;
+  font: 600 0.95rem/1 "Space Grotesk", sans-serif;
+  transition: transform 140ms ease, background-color 140ms ease;
+}
+
+button:hover {
+  background: var(--accent-2);
+  transform: translateY(-1px);
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+}
+
+button.secondary {
+  background: #3a506b;
+}
+
+button.secondary:hover {
+  background: #2b3d55;
+}
+
+button.ghost {
+  background: #f8fafc;
+  border: 1px solid var(--line);
+  color: var(--ink);
+}
+
+button.ghost:hover {
+  background: #eef2f7;
+}
+
+.room-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.room-code-label {
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+#roomCodeText {
+  font-family: "Space Mono", monospace;
+  margin-top: 0.2rem;
+}
+
+.round-text {
+  color: var(--muted);
+  margin-top: 0.2rem;
+}
+
+.header-actions {
+  display: flex;
+  gap: 0.5rem;
+  align-items: start;
+}
+
+.controls {
+  margin-top: 1rem;
+  display: grid;
+  gap: 0.4rem;
+}
+
+.host-controls {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.hint {
+  color: var(--muted);
+  font-size: 0.93rem;
+}
+
+.cards-wrap {
+  margin-top: 1rem;
+}
+
+.cards-wrap h3,
+.participants-wrap h3 {
+  margin-bottom: 0.55rem;
+}
+
+.cards {
+  display: grid;
+  gap: 0.5rem;
+  grid-template-columns: repeat(auto-fit, minmax(56px, 1fr));
+}
+
+.card {
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--ink);
+  min-height: 64px;
+  font-family: "Space Mono", monospace;
+  font-size: 1.1rem;
+}
+
+.card:hover {
+  border-color: var(--accent-2);
+}
+
+.card.active {
+  background: var(--vote);
+  border-color: #bb8f00;
+}
+
+.participants-wrap {
+  margin-top: 1.1rem;
+}
+
+.participants-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+#participantCount {
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+.participants {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.45rem;
+}
+
+.participant {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 0.55rem 0.65rem;
+  background: #fbfcfe;
+}
+
+.participant .name {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.badge {
+  font-size: 0.74rem;
+  border-radius: 999px;
+  padding: 0.1rem 0.4rem;
+  background: #e7eef8;
+  color: #304b69;
+}
+
+.badge.host {
+  background: #fff0d6;
+  color: #704400;
+}
+
+.badge.offline {
+  background: #fce8e6;
+  color: var(--danger);
+}
+
+.vote {
+  font-family: "Space Mono", monospace;
+}
+
+.vote.voted {
+  color: #196f3d;
+}
+
+.summary {
+  margin-top: 1rem;
+  border: 1px solid #cce3d9;
+  background: #f0fbf6;
+  border-radius: 10px;
+  padding: 0.7rem;
+  color: #154734;
+}
+
+@media (max-width: 760px) {
+  .app-shell {
+    width: min(96vw, 920px);
+    margin-top: 0.8rem;
+  }
+
+  .panel {
+    padding: 0.85rem;
+  }
+
+  .header-actions,
+  .host-controls {
+    width: 100%;
+  }
+
+  .header-actions button,
+  .host-controls button {
+    flex: 1;
+  }
+}
