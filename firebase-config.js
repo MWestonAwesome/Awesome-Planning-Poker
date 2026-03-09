@@ -9,5 +9,6 @@ export const firebaseConfig = {
 };
 
 export const allowedEmailDomains = [
-  "intuety.io"
+  "intuety.io",
+  "gmail.com"
 ];
