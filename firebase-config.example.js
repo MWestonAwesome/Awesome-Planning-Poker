@@ -10,3 +10,7 @@ export const firebaseConfig = {
 export const allowedEmailDomains = [
   "yourcompany.com"
 ];
+
+export const allowedEmails = [
+  "tester@gmail.com"
+];
