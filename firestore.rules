@@ -6,12 +6,22 @@ service cloud.firestore {
         && request.auth.token.firebase.sign_in_provider == "google.com";
     }
 
+    function allowedUser() {
+      return signedIn()
+        && request.auth.token.email_verified == true
+        && request.auth.token.email != null
+        && (
+          request.auth.token.email == "jedhfdavidson@gmail.com"
+          || request.auth.token.email.matches(".*@intuety\\.io$")
+        );
+    }
+
     function room(roomId) {
       return get(/databases/$(database)/documents/rooms/$(roomId));
     }
 
     function isHost(roomId) {
-      return signedIn() && room(roomId).data.hostUid == request.auth.uid;
+      return allowedUser() && room(roomId).data.hostUid == request.auth.uid;
     }
 
     function previousHostMissing(roomId) {
@@ -20,16 +30,16 @@ service cloud.firestore {
     }
 
     function canClaimHost(roomId) {
-      return signedIn()
+      return allowedUser()
         && request.resource.data.hostUid == request.auth.uid
         && request.resource.data.diff(resource.data).changedKeys().hasOnly(["hostUid", "updatedAt"])
         && previousHostMissing(roomId);
     }
 
     match /rooms/{roomId} {
-      allow read: if signedIn();
+      allow read: if allowedUser();
 
-      allow create: if signedIn()
+      allow create: if allowedUser()
         && request.resource.data.hostUid == request.auth.uid
         && request.resource.data.revealed == false
         && request.resource.data.round == 1;
@@ -38,18 +48,18 @@ service cloud.firestore {
       allow delete: if false;
 
       match /participants/{userId} {
-        allow read: if signedIn();
+        allow read: if allowedUser();
 
-        allow create: if signedIn()
+        allow create: if allowedUser()
           && request.auth.uid == userId
           && request.resource.data.uid == request.auth.uid;
 
-        allow update: if signedIn() && (
+        allow update: if allowedUser() && (
           (request.auth.uid == userId && request.resource.data.uid == request.auth.uid)
           || isHost(roomId)
         );
 
-        allow delete: if signedIn() && (request.auth.uid == userId || isHost(roomId));
+        allow delete: if allowedUser() && (request.auth.uid == userId || isHost(roomId));
       }
     }
   }
