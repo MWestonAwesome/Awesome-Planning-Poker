@@ -21,7 +21,11 @@ import {
   updateDoc,
   writeBatch
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { allowedEmailDomains as configuredDomains, firebaseConfig } from "./firebase-config.js";
+import {
+  allowedEmailDomains as configuredDomains,
+  allowedEmails as configuredEmails,
+  firebaseConfig
+} from "./firebase-config.js";
 
 const CARD_VALUES = ["0", "1", "2", "3", "5", "8", "13", "21", "34", "55", "89", "?"];
 const ROOM_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -30,6 +34,9 @@ const STALE_MS = 120000;
 const HEARTBEAT_MS = 25000;
 const ALLOWED_DOMAINS = Array.isArray(configuredDomains)
   ? configuredDomains.map((domain) => String(domain).toLowerCase().replace(/^@/, "").trim()).filter(Boolean)
+  : [];
+const ALLOWED_EMAILS = Array.isArray(configuredEmails)
+  ? configuredEmails.map((email) => String(email).toLowerCase().trim()).filter(Boolean)
   : [];
 
 const els = {
@@ -148,16 +155,27 @@ function validateSignedInUser(user) {
     return { ok: false, message: "Google account did not provide an email." };
   }
 
-  if (ALLOWED_DOMAINS.length === 0) {
+  if (ALLOWED_DOMAINS.length === 0 && ALLOWED_EMAILS.length === 0) {
+    return { ok: true };
+  }
+
+  if (ALLOWED_EMAILS.includes(email)) {
     return { ok: true };
   }
 
   const domain = getEmailDomain(email);
-  if (!ALLOWED_DOMAINS.includes(domain)) {
-    return { ok: false, message: `This app is restricted to: ${ALLOWED_DOMAINS.join(", ")}.` };
+  if (ALLOWED_DOMAINS.includes(domain)) {
+    return { ok: true };
   }
 
-  return { ok: true };
+  const domainPart = ALLOWED_DOMAINS.length ? `domains: ${ALLOWED_DOMAINS.join(", ")}` : "";
+  const emailPart = ALLOWED_EMAILS.length ? `emails: ${ALLOWED_EMAILS.join(", ")}` : "";
+  const separator = domainPart && emailPart ? " | " : "";
+
+  return {
+    ok: false,
+    message: `This app is restricted to ${domainPart}${separator}${emailPart}.`
+  };
 }
 
 function generateRoomCode(length = 6) {

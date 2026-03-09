@@ -12,3 +12,7 @@ export const allowedEmailDomains = [
   "intuety.io",
   "gmail.com"
 ];
+
+export const allowedEmails = [
+  "jedhfdavidson@gmail.com"
+];
