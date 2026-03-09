@@ -57,8 +57,10 @@ const els = {
   leaveButton: document.getElementById("leaveButton"),
 
   hostControls: document.getElementById("hostControls"),
+  takeoverControls: document.getElementById("takeoverControls"),
   revealButton: document.getElementById("revealButton"),
   nextRoundButton: document.getElementById("nextRoundButton"),
+  claimHostButton: document.getElementById("claimHostButton"),
   controlHint: document.getElementById("controlHint"),
 
   cards: document.getElementById("cards"),
@@ -231,6 +233,19 @@ function setCardsDisabled(disabled) {
   }
 }
 
+function canClaimHost() {
+  if (!state.roomCode || state.isHost) {
+    return false;
+  }
+
+  if (!state.hostUid) {
+    return true;
+  }
+
+  const hostParticipant = state.participants.get(state.hostUid);
+  return !hostParticipant || isParticipantOffline(hostParticipant);
+}
+
 function renderCards() {
   els.cards.innerHTML = "";
 
@@ -262,15 +277,20 @@ function renderCards() {
 function renderControls() {
   els.roomCodeText.textContent = state.roomCode || "------";
   els.roundText.textContent = `Round ${state.round}`;
+  const claimable = canClaimHost();
 
   els.hostControls.classList.toggle("hidden", !state.isHost);
-  els.revealButton.disabled = !state.isHost || state.revealed || state.busy;
-  els.nextRoundButton.disabled = !state.isHost || !state.revealed || state.busy;
+  els.takeoverControls.classList.toggle("hidden", !claimable);
+  els.revealButton.disabled = !state.isHost || state.revealed;
+  els.nextRoundButton.disabled = !state.isHost || !state.revealed;
+  els.claimHostButton.disabled = !claimable;
 
   if (state.isHost) {
     els.controlHint.textContent = state.revealed
       ? "Votes are revealed. Start a new round to vote again."
       : "You are host. Reveal votes when everyone is ready.";
+  } else if (claimable) {
+    els.controlHint.textContent = "Host is unavailable. Claim host to continue.";
   } else {
     els.controlHint.textContent = state.revealed
       ? "Host revealed the cards."
@@ -596,6 +616,26 @@ async function castVote(value) {
   );
 }
 
+async function claimHost() {
+  if (!canClaimHost()) {
+    return;
+  }
+
+  state.busy = true;
+  renderControls();
+
+  try {
+    await updateDoc(roomRef(), {
+      hostUid: state.uid,
+      updatedAt: serverTimestamp()
+    });
+    setStatus("You are now the host.");
+  } finally {
+    state.busy = false;
+    renderControls();
+  }
+}
+
 async function revealVotes() {
   if (!state.isHost || state.revealed) {
     return;
@@ -737,6 +777,14 @@ function wireEvents() {
   els.leaveButton.addEventListener("click", async () => {
     await leaveRoom(false);
     setStatus("Left session.");
+  });
+
+  els.claimHostButton.addEventListener("click", async () => {
+    try {
+      await claimHost();
+    } catch (_error) {
+      setStatus("Could not claim host yet. Ask the original host to leave first.", true);
+    }
   });
 
   els.revealButton.addEventListener("click", async () => {
