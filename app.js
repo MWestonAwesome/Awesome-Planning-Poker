@@ -381,12 +381,6 @@ function renderCards() {
       await castVote(option.value);
     });
 
-    const inner = document.createElement("span");
-    inner.className = "card-inner";
-
-    const front = document.createElement("span");
-    front.className = "card-face card-front";
-
     const valueEl = document.createElement("span");
     valueEl.className = "card-value";
     valueEl.textContent = option.label;
@@ -395,33 +389,14 @@ function renderCards() {
     labelEl.className = "card-label";
     labelEl.textContent = option.detail;
 
-    front.append(valueEl, labelEl);
-
-    const back = document.createElement("span");
-    back.className = "card-face card-back";
-
-    const backTitle = document.createElement("span");
-    backTitle.className = "card-back-title";
-    backTitle.textContent = option.value === "THROW" ? "Refine" : "Locked";
-
-    const backLabel = document.createElement("span");
-    backLabel.className = "card-back-label";
-    backLabel.textContent = option.value === "THROW" ? "Foam dart veto" : "Vote loaded";
-
-    back.append(backTitle, backLabel);
-    inner.append(front, back);
-    btn.appendChild(inner);
+    btn.append(valueEl, labelEl);
 
     if (option.value === "THROW") {
       btn.classList.add("card-throw");
     }
 
     if (state.selectedVote === option.value) {
-      btn.classList.add("active", "is-picked");
-    }
-
-    if (state.revealed) {
-      btn.classList.add("is-revealed");
+      btn.classList.add("active");
     }
 
     if (state.revealed || !state.roomCode || isCountdownActive()) {
