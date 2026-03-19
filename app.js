@@ -49,6 +49,7 @@ const HEARTBEAT_MS = 25000;
 const REVEAL_COUNTDOWN_MS = 4000;
 const COUNTDOWN_TICK_MS = 250;
 const SPEECH_LANG = "en-GB";
+const SOUND_PREF_KEY = "poker:isMuted";
 const SPEECH_LABELS = {
   "0": "Zero",
   "1": "One",
@@ -103,6 +104,7 @@ const els = {
   roundText: document.getElementById("roundText"),
   copyInviteButton: document.getElementById("copyInviteButton"),
   leaveButton: document.getElementById("leaveButton"),
+  muteButton: document.getElementById("muteButton"),
 
   hostControls: document.getElementById("hostControls"),
   takeoverControls: document.getElementById("takeoverControls"),
@@ -117,7 +119,9 @@ const els = {
   cards: document.getElementById("cards"),
   participants: document.getElementById("participants"),
   participantCount: document.getElementById("participantCount"),
-  summary: document.getElementById("summary")
+  summary: document.getElementById("summary"),
+  celebrationLights: document.getElementById("celebrationLights"),
+  confettiBurst: document.getElementById("confettiBurst")
 };
 
 const state = {
@@ -140,8 +144,13 @@ const state = {
   countdownTimer: null,
   revealAnimationTimer: null,
   revealAnimationUntil: 0,
+  celebrationTimer: null,
   voices: [],
   lastSpokenCountdown: null,
+  audioContext: null,
+  countdownMusicTimer: null,
+  countdownMusicStep: 0,
+  isMuted: false,
   finalizingReveal: false,
   busy: false
 };
@@ -342,6 +351,196 @@ function getVoteLabel(value, compact = false) {
   return option.label;
 }
 
+function readMutedPreference() {
+  try {
+    return localStorage.getItem(SOUND_PREF_KEY) === "1";
+  } catch (_error) {
+    return false;
+  }
+}
+
+function writeMutedPreference(value) {
+  try {
+    localStorage.setItem(SOUND_PREF_KEY, value ? "1" : "0");
+  } catch (_error) {
+    // Ignore storage failures.
+  }
+}
+
+function updateMuteButton() {
+  if (!els.muteButton) {
+    return;
+  }
+  els.muteButton.textContent = state.isMuted ? "Muted" : "Sound On";
+  els.muteButton.setAttribute("aria-pressed", state.isMuted ? "true" : "false");
+}
+
+function setMuted(nextMuted) {
+  state.isMuted = Boolean(nextMuted);
+  writeMutedPreference(state.isMuted);
+  updateMuteButton();
+
+  const speech = getSpeech();
+  if (state.isMuted && speech) {
+    speech.cancel();
+  }
+
+  if (state.isMuted) {
+    stopCountdownMusic();
+  } else {
+    syncCountdownMusic();
+  }
+}
+
+async function ensureAudioContext() {
+  if (!window.AudioContext && !window.webkitAudioContext) {
+    return null;
+  }
+
+  if (!state.audioContext) {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    state.audioContext = new Ctx();
+  }
+
+  if (state.audioContext.state === "suspended") {
+    try {
+      await state.audioContext.resume();
+    } catch (_error) {
+      return state.audioContext;
+    }
+  }
+
+  return state.audioContext;
+}
+
+function playSynthTone(frequency, startAt, duration, type = "triangle", volume = 0.045) {
+  if (!state.audioContext || state.isMuted) {
+    return;
+  }
+
+  const oscillator = state.audioContext.createOscillator();
+  const gain = state.audioContext.createGain();
+  const filter = state.audioContext.createBiquadFilter();
+
+  oscillator.type = type;
+  oscillator.frequency.setValueAtTime(frequency, startAt);
+  oscillator.frequency.exponentialRampToValueAtTime(Math.max(60, frequency * 0.985), startAt + duration);
+
+  filter.type = "lowpass";
+  filter.frequency.setValueAtTime(1400, startAt);
+  filter.Q.value = 1.8;
+
+  gain.gain.setValueAtTime(0.0001, startAt);
+  gain.gain.exponentialRampToValueAtTime(volume, startAt + 0.02);
+  gain.gain.exponentialRampToValueAtTime(0.0001, startAt + duration);
+
+  oscillator.connect(filter);
+  filter.connect(gain);
+  gain.connect(state.audioContext.destination);
+
+  oscillator.start(startAt);
+  oscillator.stop(startAt + duration + 0.03);
+}
+
+async function playCountdownPulse() {
+  const audio = await ensureAudioContext();
+  if (!audio || state.isMuted) {
+    return;
+  }
+
+  const riffs = [
+    [196, 246.94, 293.66],
+    [220, 261.63, 329.63],
+    [246.94, 293.66, 369.99],
+    [261.63, 329.63, 392]
+  ];
+  const notes = riffs[state.countdownMusicStep % riffs.length];
+  const start = audio.currentTime + 0.01;
+  notes.forEach((frequency, index) => {
+    playSynthTone(frequency, start + index * 0.035, 0.18, index === 0 ? "sawtooth" : "triangle", index === 0 ? 0.035 : 0.028);
+  });
+  state.countdownMusicStep += 1;
+}
+
+function stopCountdownMusic() {
+  if (state.countdownMusicTimer) {
+    clearInterval(state.countdownMusicTimer);
+    state.countdownMusicTimer = null;
+  }
+  state.countdownMusicStep = 0;
+}
+
+function syncCountdownMusic() {
+  if (state.isMuted || !isCountdownActive()) {
+    stopCountdownMusic();
+    return;
+  }
+
+  if (state.countdownMusicTimer) {
+    return;
+  }
+
+  playCountdownPulse().catch(() => {
+    // Audio can fail before first user gesture.
+  });
+  state.countdownMusicTimer = setInterval(() => {
+    playCountdownPulse().catch(() => {
+      // Ignore intermittent browser audio restrictions.
+    });
+  }, 320);
+}
+
+async function playRevealSting() {
+  const audio = await ensureAudioContext();
+  if (!audio || state.isMuted) {
+    return;
+  }
+
+  const start = audio.currentTime + 0.01;
+  playSynthTone(392, start, 0.16, "square", 0.05);
+  playSynthTone(523.25, start + 0.08, 0.22, "square", 0.055);
+  playSynthTone(659.25, start + 0.14, 0.28, "triangle", 0.06);
+}
+
+function launchCelebration() {
+  if (!els.confettiBurst || !els.celebrationLights) {
+    return;
+  }
+
+  if (state.celebrationTimer) {
+    clearTimeout(state.celebrationTimer);
+  }
+
+  els.confettiBurst.innerHTML = "";
+  const colors = ["var(--coral)", "var(--orange)", "var(--sky)", "var(--mint)", "var(--gold)", "var(--violet)"];
+
+  for (let i = 0; i < 72; i += 1) {
+    const piece = document.createElement("span");
+    piece.className = "confetti-piece";
+    piece.style.left = `${Math.random() * 100}%`;
+    piece.style.background = colors[i % colors.length];
+    piece.style.animationDelay = `${Math.random() * 0.18}s`;
+    piece.style.animationDuration = `${1.7 + Math.random() * 1.2}s`;
+    piece.style.setProperty("--drift-x", `${-26 + Math.random() * 52}vw`);
+    piece.style.setProperty("--spin-end", `${220 + Math.random() * 520}deg`);
+    els.confettiBurst.appendChild(piece);
+  }
+
+  els.confettiBurst.classList.remove("hidden");
+  els.confettiBurst.classList.add("is-live");
+  els.celebrationLights.classList.remove("hidden");
+  els.celebrationLights.classList.add("is-live");
+
+  state.celebrationTimer = setTimeout(() => {
+    els.confettiBurst.classList.remove("is-live");
+    els.celebrationLights.classList.remove("is-live");
+    els.confettiBurst.classList.add("hidden");
+    els.celebrationLights.classList.add("hidden");
+    els.confettiBurst.innerHTML = "";
+    state.celebrationTimer = null;
+  }, 2600);
+}
+
 function getSpeech() {
   return window.speechSynthesis || null;
 }
@@ -379,7 +578,7 @@ function pickArenaVoice(mode = "announce") {
 
 function speakLocal(text, mode = "announce") {
   const speech = getSpeech();
-  if (!speech || !text) {
+  if (!speech || !text || state.isMuted) {
     return;
   }
 
@@ -463,6 +662,7 @@ function syncCountdownTicker() {
   const countdownActive = isCountdownActive();
 
   if (countdownActive && !state.countdownTimer) {
+    syncCountdownMusic();
     state.countdownTimer = setInterval(() => {
       if (state.isHost && state.countdownEndsAt && Date.now() >= state.countdownEndsAt) {
         finalizeRevealCountdown().catch(() => {
@@ -471,21 +671,28 @@ function syncCountdownTicker() {
       }
       renderControls();
       syncCountdownSpeech();
+      syncCountdownMusic();
     }, COUNTDOWN_TICK_MS);
   }
 
   if (!countdownActive && state.countdownTimer) {
     clearInterval(state.countdownTimer);
     state.countdownTimer = null;
+    stopCountdownMusic();
   }
 
   if (!countdownActive) {
     state.lastSpokenCountdown = null;
+    stopCountdownMusic();
   }
 }
 
 function triggerRevealAnimation() {
   state.revealAnimationUntil = Date.now() + 1100;
+  launchCelebration();
+  playRevealSting().catch(() => {
+    // Ignore local audio restrictions.
+  });
 
   if (state.revealAnimationTimer) {
     clearTimeout(state.revealAnimationTimer);
@@ -734,6 +941,7 @@ function resetLiveState() {
   state.hostUid = "";
   state.isHost = false;
   state.finalizingReveal = false;
+  stopCountdownMusic();
 
   renderCards();
   renderControls();
@@ -758,9 +966,23 @@ function stopLiveListeners() {
     state.countdownTimer = null;
   }
   state.lastSpokenCountdown = null;
+  stopCountdownMusic();
   if (state.revealAnimationTimer) {
     clearTimeout(state.revealAnimationTimer);
     state.revealAnimationTimer = null;
+  }
+  if (state.celebrationTimer) {
+    clearTimeout(state.celebrationTimer);
+    state.celebrationTimer = null;
+  }
+  if (els.confettiBurst) {
+    els.confettiBurst.classList.remove("is-live");
+    els.confettiBurst.classList.add("hidden");
+    els.confettiBurst.innerHTML = "";
+  }
+  if (els.celebrationLights) {
+    els.celebrationLights.classList.remove("is-live");
+    els.celebrationLights.classList.add("hidden");
   }
 }
 
@@ -925,9 +1147,8 @@ async function enterSession(roomCode, displayName) {
   state.isHost = false;
   state.finalizingReveal = false;
   sessionStorage.setItem("poker:displayName", displayName);
-  sessionStorage.setItem("poker:roomCode", roomCode);
-
-  setRoomCodeInUrl(roomCode);
+  sessionStorage.removeItem("poker:roomCode");
+  setRoomCodeInUrl("");
   els.entryPanel.classList.add("hidden");
   els.roomPanel.classList.remove("hidden");
   setStatus("");
@@ -1121,6 +1342,12 @@ async function handleEntrySubmit(event) {
 }
 
 function wireEvents() {
+  document.addEventListener("pointerdown", () => {
+    ensureAudioContext().catch(() => {
+      // Ignore browsers that still block audio before user gestures settle.
+    });
+  }, { once: true });
+
   els.googleSignInButton.addEventListener("click", async () => {
     if (state.busy) {
       return;
@@ -1149,6 +1376,13 @@ function wireEvents() {
     }
     await signOut(state.auth);
     setStatus("Signed out.");
+  });
+
+  els.muteButton.addEventListener("click", async () => {
+    await ensureAudioContext().catch(() => {
+      // Ignore audio setup failures.
+    });
+    setMuted(!state.isMuted);
   });
 
   els.entryForm.addEventListener("submit", handleEntrySubmit);
@@ -1262,6 +1496,8 @@ async function init() {
   const app = initializeApp(firebaseConfig);
   state.auth = getAuth(app);
   state.db = getFirestore(app);
+  state.isMuted = readMutedPreference();
+  updateMuteButton();
   loadVoices();
   if (getSpeech()) {
     getSpeech().onvoiceschanged = () => {

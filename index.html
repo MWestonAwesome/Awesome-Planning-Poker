@@ -10,9 +10,11 @@
       href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Space+Mono:wght@400;700&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="./styles.css?v=20260319i" />
+    <link rel="stylesheet" href="./styles.css?v=20260319k" />
   </head>
   <body>
+    <div id="celebrationLights" class="celebration-lights hidden" aria-hidden="true"></div>
+    <div id="confettiBurst" class="confetti-burst hidden" aria-hidden="true"></div>
     <main class="app-shell">
       <section class="hero">
         <div class="hero-copy">
@@ -74,6 +76,7 @@
             </div>
           </div>
           <div class="header-actions">
+            <button id="muteButton" type="button" class="ghost" aria-pressed="false">Sound On</button>
             <button id="copyInviteButton" type="button" class="secondary">Copy Invite Link</button>
             <button id="leaveButton" type="button" class="ghost">Leave</button>
           </div>
@@ -110,6 +113,6 @@
       </section>
     </main>
 
-    <script type="module" src="./app.js?v=20260319i"></script>
+    <script type="module" src="./app.js?v=20260319k"></script>
   </body>
 </html>
