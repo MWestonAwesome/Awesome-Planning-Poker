@@ -25,7 +25,7 @@ import {
   allowedEmailDomains as configuredDomains,
   allowedEmails as configuredEmails,
   firebaseConfig
-} from "./firebase-config.js";
+} from "./firebase-config.js?v=20260319c";
 
 const CARD_OPTIONS = [
   { value: "0", label: "0", detail: "Trivial" },
