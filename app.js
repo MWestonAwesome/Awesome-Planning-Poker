@@ -27,16 +27,45 @@ import {
   firebaseConfig
 } from "./firebase-config.js";
 
-const CARD_VALUES = ["0", "1", "2", "3", "5", "8", "13", "21", "34", "55", "89", "?"];
+const CARD_OPTIONS = [
+  { value: "0", label: "0", detail: "Trivial" },
+  { value: "1", label: "1", detail: "Tiny" },
+  { value: "2", label: "2", detail: "Small" },
+  { value: "3", label: "3", detail: "Straightforward" },
+  { value: "5", label: "5", detail: "Moderate" },
+  { value: "8", label: "8", detail: "Chunky" },
+  { value: "13", label: "13", detail: "Large" },
+  { value: "21", label: "21", detail: "Very large" },
+  { value: "34", label: "34", detail: "Break it up" },
+  { value: "55", label: "55", detail: "Needs slicing" },
+  { value: "89", label: "89", detail: "Too big" },
+  { value: "?", label: "?", detail: "Need context" },
+  { value: "THROW", label: "Throw Paper", detail: "Back to refinement" }
+];
 const ROOM_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const REQUIRED_CONFIG_KEYS = ["apiKey", "authDomain", "projectId", "storageBucket", "messagingSenderId", "appId"];
 const STALE_MS = 120000;
 const HEARTBEAT_MS = 25000;
+function normalizeEmail(rawEmail) {
+  const email = String(rawEmail || "").toLowerCase().trim();
+  if (!email.includes("@")) {
+    return email;
+  }
+  const [local, rawDomain] = email.split("@");
+  const domain = rawDomain === "googlemail.com" ? "gmail.com" : rawDomain;
+  return `${local}@${domain}`;
+}
+
+function normalizeDomain(rawDomain) {
+  const domain = String(rawDomain || "").toLowerCase().replace(/^@/, "").trim();
+  return domain === "googlemail.com" ? "gmail.com" : domain;
+}
+
 const ALLOWED_DOMAINS = Array.isArray(configuredDomains)
-  ? configuredDomains.map((domain) => String(domain).toLowerCase().replace(/^@/, "").trim()).filter(Boolean)
+  ? configuredDomains.map((domain) => normalizeDomain(domain)).filter(Boolean)
   : [];
 const ALLOWED_EMAILS = Array.isArray(configuredEmails)
-  ? configuredEmails.map((email) => String(email).toLowerCase().trim()).filter(Boolean)
+  ? configuredEmails.map((email) => normalizeEmail(email)).filter(Boolean)
   : [];
 
 const els = {
@@ -140,7 +169,7 @@ function getUserDisplayName(user) {
 }
 
 function getEmailDomain(email) {
-  const cleaned = String(email || "").toLowerCase().trim();
+  const cleaned = normalizeEmail(email);
   if (!cleaned.includes("@")) {
     return "";
   }
@@ -152,7 +181,7 @@ function validateSignedInUser(user) {
     return { ok: false, message: "Not signed in." };
   }
 
-  const email = String(user.email || "").toLowerCase().trim();
+  const email = normalizeEmail(user.email || "");
   if (!email) {
     return { ok: false, message: "Google account did not provide an email." };
   }
@@ -246,23 +275,51 @@ function canClaimHost() {
   return !hostParticipant || isParticipantOffline(hostParticipant);
 }
 
+function getCardOption(value) {
+  return CARD_OPTIONS.find((option) => option.value === value) || null;
+}
+
+function getVoteLabel(value, compact = false) {
+  const option = getCardOption(value);
+  if (!option) {
+    return String(value);
+  }
+  if (compact && option.value === "THROW") {
+    return "Throw";
+  }
+  return option.label;
+}
+
 function renderCards() {
   els.cards.innerHTML = "";
 
-  for (const value of CARD_VALUES) {
+  for (const option of CARD_OPTIONS) {
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "card";
-    btn.textContent = value;
-    btn.dataset.value = value;
+    btn.dataset.value = option.value;
     btn.addEventListener("click", async () => {
       if (!state.roomCode || state.revealed || state.busy) {
         return;
       }
-      await castVote(value);
+      await castVote(option.value);
     });
 
-    if (state.selectedVote === value) {
+    const valueEl = document.createElement("span");
+    valueEl.className = "card-value";
+    valueEl.textContent = option.label;
+
+    const labelEl = document.createElement("span");
+    labelEl.className = "card-label";
+    labelEl.textContent = option.detail;
+
+    btn.append(valueEl, labelEl);
+
+    if (option.value === "THROW") {
+      btn.classList.add("card-throw");
+    }
+
+    if (state.selectedVote === option.value) {
       btn.classList.add("active");
     }
 
@@ -310,7 +367,7 @@ function formatVote(participant) {
   }
 
   if (state.revealed || participant.uid === state.uid) {
-    return String(vote);
+    return getVoteLabel(vote, true);
   }
 
   return "Voted";
@@ -383,19 +440,34 @@ function renderSummary(list) {
   const numericVotes = list
     .map((p) => Number.parseFloat(String(p.vote)))
     .filter((n) => Number.isFinite(n));
+  const throwPaperCount = list.filter((participant) => participant.vote === "THROW").length;
+  const unknownCount = list.filter((participant) => participant.vote === "?").length;
 
-  if (!numericVotes.length) {
+  if (!numericVotes.length && !throwPaperCount && !unknownCount) {
     els.summary.textContent = "Votes revealed.";
     els.summary.classList.remove("hidden");
     return;
   }
 
-  const total = numericVotes.reduce((sum, value) => sum + value, 0);
-  const average = total / numericVotes.length;
-  const min = Math.min(...numericVotes);
-  const max = Math.max(...numericVotes);
+  const parts = [];
 
-  els.summary.textContent = `Revealed ${numericVotes.length} numeric votes. Average ${average.toFixed(1)}, range ${min}-${max}.`;
+  if (numericVotes.length) {
+    const total = numericVotes.reduce((sum, value) => sum + value, 0);
+    const average = total / numericVotes.length;
+    const min = Math.min(...numericVotes);
+    const max = Math.max(...numericVotes);
+    parts.push(`Revealed ${numericVotes.length} numeric votes. Average ${average.toFixed(1)}, range ${min}-${max}.`);
+  }
+
+  if (unknownCount) {
+    parts.push(`${unknownCount} question vote${unknownCount === 1 ? "" : "s"}.`);
+  }
+
+  if (throwPaperCount) {
+    parts.push(`${throwPaperCount} throw paper vote${throwPaperCount === 1 ? "" : "s"} signalling more refinement needed.`);
+  }
+
+  els.summary.textContent = parts.join(" ");
   els.summary.classList.remove("hidden");
 }
 

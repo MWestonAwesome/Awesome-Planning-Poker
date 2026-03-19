@@ -15,8 +15,24 @@
   <body>
     <main class="app-shell">
       <section class="hero">
-        <h1>Planning Poker</h1>
-        <p>Session-only voting with Fibonacci cards. Create a room, share the invite link, and reveal together.</p>
+        <div class="hero-copy">
+          <p class="eyebrow">Team estimation room</p>
+          <h1>Planning Poker</h1>
+          <p>Fast, clean Fibonacci voting for story sizing. Create a room, invite the team, reveal together, and use Throw Paper when the work still needs another pass.</p>
+          <div class="hero-pills">
+            <span class="pill">Realtime sync</span>
+            <span class="pill">Google sign-in</span>
+            <span class="pill">Invite links</span>
+          </div>
+        </div>
+        <aside class="hero-card" aria-label="How it works">
+          <p class="hero-card-title">Round flow</p>
+          <ol class="hero-steps">
+            <li>Create or join the room</li>
+            <li>Pick a Fibonacci card or Throw Paper</li>
+            <li>Reveal, discuss, and reset</li>
+          </ol>
+        </aside>
       </section>
 
       <section id="status" class="status hidden" role="status" aria-live="polite"></section>
@@ -59,7 +75,10 @@
         </section>
 
         <section class="cards-wrap" aria-label="Voting cards">
-          <h3>Your vote</h3>
+          <div class="section-head">
+            <h3>Your vote</h3>
+            <p class="section-copy">Choose a Fibonacci card, or use Throw Paper when the story needs to go back through refinement.</p>
+          </div>
           <div id="cards" class="cards"></div>
         </section>
 
