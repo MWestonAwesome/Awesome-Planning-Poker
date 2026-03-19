@@ -53,7 +53,8 @@ function normalizeEmail(rawEmail) {
   }
   const [local, rawDomain] = email.split("@");
   const domain = rawDomain === "googlemail.com" ? "gmail.com" : rawDomain;
-  return `${local}@${domain}`;
+  const normalizedLocal = domain === "gmail.com" ? local.split("+")[0].replace(/\./g, "") : local;
+  return `${normalizedLocal}@${domain}`;
 }
 
 function normalizeDomain(rawDomain) {
@@ -199,13 +200,9 @@ function validateSignedInUser(user) {
     return { ok: true };
   }
 
-  const domainPart = ALLOWED_DOMAINS.length ? `domains: ${ALLOWED_DOMAINS.join(", ")}` : "";
-  const emailPart = ALLOWED_EMAILS.length ? `emails: ${ALLOWED_EMAILS.join(", ")}` : "";
-  const separator = domainPart && emailPart ? " | " : "";
-
   return {
     ok: false,
-    message: `This app is restricted to ${domainPart}${separator}${emailPart}.`
+    message: "This app is restricted to approved company or tester accounts."
   };
 }
 
