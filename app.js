@@ -902,6 +902,16 @@ function subscribeToRoom(roomCode) {
 async function enterSession(roomCode, displayName) {
   state.roomCode = roomCode;
   state.displayName = displayName;
+  state.participants.clear();
+  state.selectedVote = null;
+  state.revealed = false;
+  state.countdownEndsAt = 0;
+  state.revealAnimationUntil = 0;
+  state.lastSpokenCountdown = null;
+  state.round = 1;
+  state.hostUid = "";
+  state.isHost = false;
+  state.finalizingReveal = false;
   sessionStorage.setItem("poker:displayName", displayName);
   sessionStorage.setItem("poker:roomCode", roomCode);
 
