@@ -46,6 +46,8 @@ const ROOM_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const REQUIRED_CONFIG_KEYS = ["apiKey", "authDomain", "projectId", "storageBucket", "messagingSenderId", "appId"];
 const STALE_MS = 120000;
 const HEARTBEAT_MS = 25000;
+const REVEAL_COUNTDOWN_MS = 4000;
+const COUNTDOWN_TICK_MS = 250;
 function normalizeEmail(rawEmail) {
   const email = String(rawEmail || "").toLowerCase().trim();
   if (!email.includes("@")) {
@@ -92,6 +94,9 @@ const els = {
   nextRoundButton: document.getElementById("nextRoundButton"),
   claimHostButton: document.getElementById("claimHostButton"),
   controlHint: document.getElementById("controlHint"),
+  countdownBadge: document.getElementById("countdownBadge"),
+  countdownValue: document.getElementById("countdownValue"),
+  readyBadge: document.getElementById("readyBadge"),
 
   cards: document.getElementById("cards"),
   participants: document.getElementById("participants"),
@@ -110,11 +115,14 @@ const state = {
   hostUid: "",
   round: 1,
   revealed: false,
+  countdownEndsAt: 0,
   selectedVote: null,
   participants: new Map(),
   roomUnsub: null,
   participantUnsub: null,
   heartbeatTimer: null,
+  countdownTimer: null,
+  finalizingReveal: false,
   busy: false
 };
 
@@ -314,6 +322,50 @@ function getVoteLabel(value, compact = false) {
   return option.label;
 }
 
+function getCountdownSecondsRemaining() {
+  if (!state.countdownEndsAt) {
+    return 0;
+  }
+  return Math.max(0, Math.ceil((state.countdownEndsAt - Date.now()) / 1000));
+}
+
+function isCountdownActive() {
+  return Boolean(state.countdownEndsAt) && !state.revealed;
+}
+
+function hasParticipantVoted(participant) {
+  return participant.vote !== null && participant.vote !== undefined && participant.vote !== "";
+}
+
+function getReadyCounts() {
+  const list = Array.from(state.participants.values());
+  const voted = list.filter((participant) => hasParticipantVoted(participant)).length;
+  return {
+    total: list.length,
+    voted
+  };
+}
+
+function syncCountdownTicker() {
+  const countdownActive = isCountdownActive();
+
+  if (countdownActive && !state.countdownTimer) {
+    state.countdownTimer = setInterval(() => {
+      if (state.isHost && state.countdownEndsAt && Date.now() >= state.countdownEndsAt) {
+        finalizeRevealCountdown().catch(() => {
+          // Non-fatal. Snapshot will reconcile state on the next update.
+        });
+      }
+      renderControls();
+    }, COUNTDOWN_TICK_MS);
+  }
+
+  if (!countdownActive && state.countdownTimer) {
+    clearInterval(state.countdownTimer);
+    state.countdownTimer = null;
+  }
+}
+
 function renderCards() {
   els.cards.innerHTML = "";
 
@@ -323,11 +375,17 @@ function renderCards() {
     btn.className = "card";
     btn.dataset.value = option.value;
     btn.addEventListener("click", async () => {
-      if (!state.roomCode || state.revealed || state.busy) {
+      if (!state.roomCode || state.revealed || state.busy || isCountdownActive()) {
         return;
       }
       await castVote(option.value);
     });
+
+    const inner = document.createElement("span");
+    inner.className = "card-inner";
+
+    const front = document.createElement("span");
+    front.className = "card-face card-front";
 
     const valueEl = document.createElement("span");
     valueEl.className = "card-value";
@@ -337,17 +395,36 @@ function renderCards() {
     labelEl.className = "card-label";
     labelEl.textContent = option.detail;
 
-    btn.append(valueEl, labelEl);
+    front.append(valueEl, labelEl);
+
+    const back = document.createElement("span");
+    back.className = "card-face card-back";
+
+    const backTitle = document.createElement("span");
+    backTitle.className = "card-back-title";
+    backTitle.textContent = option.value === "THROW" ? "Refine" : "Locked";
+
+    const backLabel = document.createElement("span");
+    backLabel.className = "card-back-label";
+    backLabel.textContent = option.value === "THROW" ? "Foam dart veto" : "Vote loaded";
+
+    back.append(backTitle, backLabel);
+    inner.append(front, back);
+    btn.appendChild(inner);
 
     if (option.value === "THROW") {
       btn.classList.add("card-throw");
     }
 
     if (state.selectedVote === option.value) {
-      btn.classList.add("active");
+      btn.classList.add("active", "is-picked");
     }
 
-    if (state.revealed || !state.roomCode) {
+    if (state.revealed) {
+      btn.classList.add("is-revealed");
+    }
+
+    if (state.revealed || !state.roomCode || isCountdownActive()) {
       btn.disabled = true;
     }
 
@@ -359,14 +436,26 @@ function renderControls() {
   els.roomCodeText.textContent = state.roomCode || "------";
   els.roundText.textContent = `Round ${state.round}`;
   const claimable = canClaimHost();
+  const countdownActive = isCountdownActive();
+  const countdownSeconds = getCountdownSecondsRemaining();
+  const ready = getReadyCounts();
+  const countdownDisplay = state.finalizingReveal ? "Flip" : String(Math.max(0, countdownSeconds));
 
+  els.readyBadge.textContent = `${ready.voted} / ${ready.total} voted`;
+  els.countdownBadge.classList.toggle("hidden", !countdownActive);
+  els.countdownValue.textContent = countdownDisplay;
   els.hostControls.classList.toggle("hidden", !state.isHost);
   els.takeoverControls.classList.toggle("hidden", !claimable);
-  els.revealButton.disabled = !state.isHost || state.revealed;
+  els.revealButton.disabled = !state.isHost || state.revealed || countdownActive || state.finalizingReveal;
   els.nextRoundButton.disabled = !state.isHost || !state.revealed;
   els.claimHostButton.disabled = !claimable;
+  els.revealButton.textContent = countdownActive ? `Countdown ${countdownDisplay}` : "Reveal";
 
-  if (state.isHost) {
+  if (countdownActive) {
+    els.controlHint.textContent = state.finalizingReveal
+      ? "Cards are flipping over now."
+      : `Foam dart reveal goes live in ${Math.max(0, countdownSeconds)} second${countdownSeconds === 1 ? "" : "s"}.`;
+  } else if (state.isHost) {
     els.controlHint.textContent = state.revealed
       ? "Votes are revealed. Start a new round to vote again."
       : "You are host. Reveal votes when everyone is ready.";
@@ -378,23 +467,7 @@ function renderControls() {
       : "Waiting for host to reveal votes.";
   }
 
-  setCardsDisabled(!state.roomCode || state.revealed || state.busy);
-  renderCards();
-}
-
-function formatVote(participant) {
-  const vote = participant.vote;
-  const hasVote = vote !== null && vote !== undefined && vote !== "";
-
-  if (!hasVote) {
-    return "Waiting";
-  }
-
-  if (state.revealed || participant.uid === state.uid) {
-    return getVoteLabel(vote, true);
-  }
-
-  return "Voted";
+  setCardsDisabled(!state.roomCode || state.revealed || state.busy || countdownActive);
 }
 
 function isParticipantOffline(participant) {
@@ -443,9 +516,52 @@ function renderParticipants() {
     }
 
     const right = document.createElement("span");
-    const voteText = formatVote(participant);
-    right.textContent = voteText;
-    right.className = `vote ${voteText === "Voted" ? "voted" : ""}`;
+    right.className = "vote-card";
+
+    const voteInner = document.createElement("span");
+    voteInner.className = "vote-card-inner";
+
+    const voteFront = document.createElement("span");
+    voteFront.className = "vote-card-face vote-card-front";
+
+    const hasVote = hasParticipantVoted(participant);
+    const showFront = !hasVote || state.revealed || participant.uid === state.uid;
+    const frontValue = document.createElement("span");
+    frontValue.className = "vote-card-value";
+    frontValue.textContent = hasVote ? getVoteLabel(participant.vote, true) : "Waiting";
+
+    const frontLabel = document.createElement("span");
+    frontLabel.className = "vote-card-label";
+    if (!hasVote) {
+      frontLabel.textContent = "No vote";
+    } else if (participant.vote === "THROW") {
+      frontLabel.textContent = "Refine";
+    } else if (participant.vote === "?") {
+      frontLabel.textContent = "Need context";
+    } else {
+      frontLabel.textContent = state.revealed || participant.uid === state.uid ? "Revealed" : "Ready";
+    }
+    voteFront.append(frontValue, frontLabel);
+
+    const voteBack = document.createElement("span");
+    voteBack.className = "vote-card-face vote-card-back";
+
+    const backValue = document.createElement("span");
+    backValue.className = "vote-card-value";
+    backValue.textContent = hasVote ? "Loaded" : "Hold";
+
+    const backLabel = document.createElement("span");
+    backLabel.className = "vote-card-label";
+    backLabel.textContent = hasVote ? "Hidden vote" : "Waiting";
+    voteBack.append(backValue, backLabel);
+
+    voteInner.append(voteFront, voteBack);
+    right.appendChild(voteInner);
+
+    right.classList.toggle("is-face-up", showFront);
+    right.classList.toggle("is-voted", hasVote);
+    right.classList.toggle("is-throw", participant.vote === "THROW");
+    right.classList.toggle("is-question", participant.vote === "?");
 
     li.append(left, right);
     els.participants.appendChild(li);
@@ -499,9 +615,11 @@ function resetLiveState() {
   state.participants.clear();
   state.selectedVote = null;
   state.revealed = false;
+  state.countdownEndsAt = 0;
   state.round = 1;
   state.hostUid = "";
   state.isHost = false;
+  state.finalizingReveal = false;
 
   renderCards();
   renderControls();
@@ -520,6 +638,10 @@ function stopLiveListeners() {
   if (state.heartbeatTimer) {
     clearInterval(state.heartbeatTimer);
     state.heartbeatTimer = null;
+  }
+  if (state.countdownTimer) {
+    clearInterval(state.countdownTimer);
+    state.countdownTimer = null;
   }
 }
 
@@ -542,7 +664,8 @@ async function createRoom(displayName) {
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
     round: 1,
-    revealed: false
+    revealed: false,
+    revealCountdownEndsAt: null
   });
 
   await setDoc(participantRef(state.uid, code), {
@@ -619,8 +742,21 @@ function subscribeToRoom(roomCode) {
     state.isHost = state.uid === state.hostUid;
     state.round = Number(room.round) || 1;
     state.revealed = Boolean(room.revealed);
-
+    state.countdownEndsAt = Number(room.revealCountdownEndsAt) || 0;
+    if (state.revealed) {
+      state.countdownEndsAt = 0;
+      state.finalizingReveal = false;
+    }
+    syncCountdownTicker();
+    renderCards();
     renderControls();
+
+    if (state.isHost && state.countdownEndsAt && Date.now() >= state.countdownEndsAt && !state.revealed) {
+      finalizeRevealCountdown().catch(() => {
+        // Non-fatal. Another client snapshot will reconcile state.
+      });
+    }
+
     renderParticipants();
   });
 
@@ -644,6 +780,7 @@ function subscribeToRoom(roomCode) {
     state.selectedVote = me?.vote ?? null;
 
     renderCards();
+    renderControls();
     renderParticipants();
   });
 
@@ -732,8 +869,32 @@ async function claimHost() {
   }
 }
 
+async function finalizeRevealCountdown() {
+  if (!state.isHost || !state.countdownEndsAt || state.revealed || state.finalizingReveal) {
+    return;
+  }
+
+  if (Date.now() < state.countdownEndsAt) {
+    return;
+  }
+
+  state.finalizingReveal = true;
+  renderControls();
+
+  try {
+    await updateDoc(roomRef(), {
+      revealed: true,
+      revealCountdownEndsAt: null,
+      updatedAt: serverTimestamp()
+    });
+  } finally {
+    state.finalizingReveal = false;
+    renderControls();
+  }
+}
+
 async function revealVotes() {
-  if (!state.isHost || state.revealed) {
+  if (!state.isHost || state.revealed || isCountdownActive()) {
     return;
   }
 
@@ -742,7 +903,8 @@ async function revealVotes() {
 
   try {
     await updateDoc(roomRef(), {
-      revealed: true,
+      revealed: false,
+      revealCountdownEndsAt: Date.now() + REVEAL_COUNTDOWN_MS,
       updatedAt: serverTimestamp()
     });
   } finally {
@@ -765,6 +927,7 @@ async function startNextRound() {
 
     batch.update(roomRef(), {
       revealed: false,
+      revealCountdownEndsAt: null,
       round: state.round + 1,
       updatedAt: serverTimestamp()
     });

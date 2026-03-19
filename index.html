@@ -10,12 +10,17 @@
       href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Space+Mono:wght@400;700&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="./styles.css?v=20260319c" />
+    <link rel="stylesheet" href="./styles.css?v=20260319d" />
   </head>
   <body>
     <main class="app-shell">
       <section class="hero">
         <div class="hero-copy">
+          <div class="hero-blasts" aria-hidden="true">
+            <span class="blast blast-coral"></span>
+            <span class="blast blast-lime"></span>
+            <span class="blast blast-sky"></span>
+          </div>
           <p class="eyebrow">Team estimation room</p>
           <h1>Planning Poker</h1>
           <p>Fast, clean Fibonacci voting for story sizing. Create a room, invite the team, reveal together, and use Throw Paper when the work still needs another pass.</p>
@@ -32,6 +37,11 @@
             <li>Pick a Fibonacci card or Throw Paper</li>
             <li>Reveal, discuss, and reset</li>
           </ol>
+          <div class="dart-rack" aria-hidden="true">
+            <span class="dart dart-coral"></span>
+            <span class="dart dart-sky"></span>
+            <span class="dart dart-gold"></span>
+          </div>
         </aside>
       </section>
 
@@ -56,6 +66,12 @@
             <p class="room-code-label">Session</p>
             <h2 id="roomCodeText">------</h2>
             <p id="roundText" class="round-text">Round 1</p>
+            <div class="room-stage">
+              <span id="countdownBadge" class="countdown-badge hidden">
+                Reveal in <strong id="countdownValue">3</strong>
+              </span>
+              <span id="readyBadge" class="ready-badge">0 / 0 voted</span>
+            </div>
           </div>
           <div class="header-actions">
             <button id="copyInviteButton" type="button" class="secondary">Copy Invite Link</button>
@@ -94,6 +110,6 @@
       </section>
     </main>
 
-    <script type="module" src="./app.js?v=20260319c"></script>
+    <script type="module" src="./app.js?v=20260319d"></script>
   </body>
 </html>
