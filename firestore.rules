@@ -10,7 +10,7 @@ service cloud.firestore {
       return signedIn()
         && request.auth.token.email != null
         && (
-          request.auth.token.email.matches("^j\\.?e\\.?d\\.?h\\.?f\\.?d\\.?a\\.?v\\.?i\\.?d\\.?s\\.?o\\.?n(\\+.*)?@(gmail\\.com|googlemail\\.com)$")
+          request.auth.token.email.matches("^j\\.?h\\.?f\\.?d\\.?a\\.?v\\.?i\\.?d\\.?s\\.?o\\.?n(\\+.*)?@(gmail\\.com|googlemail\\.com)$")
           || request.auth.token.email.matches(".*@intuety\\.io$")
         );
     }

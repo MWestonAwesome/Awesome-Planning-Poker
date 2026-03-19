@@ -13,5 +13,5 @@ export const allowedEmailDomains = [
 ];
 
 export const allowedEmails = [
-  "jedhfdavidson@gmail.com"
+  "jhfdavidson@gmail.com"
 ];
