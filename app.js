@@ -49,6 +49,21 @@ const HEARTBEAT_MS = 25000;
 const REVEAL_COUNTDOWN_MS = 4000;
 const COUNTDOWN_TICK_MS = 250;
 const SPEECH_LANG = "en-GB";
+const SPEECH_LABELS = {
+  "0": "Zero",
+  "1": "One",
+  "2": "Two",
+  "3": "Three",
+  "5": "Five",
+  "8": "Eight",
+  "13": "Thirteen",
+  "21": "Twenty one",
+  "34": "Thirty four",
+  "55": "Fifty five",
+  "89": "Eighty nine",
+  "?": "Need context",
+  THROW: "Throw paper"
+};
 function normalizeEmail(rawEmail) {
   const email = String(rawEmail || "").toLowerCase().trim();
   if (!email.includes("@")) {
@@ -339,13 +354,15 @@ function loadVoices() {
   state.voices = speech.getVoices();
 }
 
-function pickArenaVoice() {
+function pickArenaVoice(mode = "announce") {
   const voices = Array.isArray(state.voices) ? state.voices : [];
   if (!voices.length) {
     return null;
   }
 
-  const preferredNames = ["Daniel", "Google UK English Male", "Google US English", "Alex", "Fred"];
+  const preferredNames = mode === "vote"
+    ? ["Bad News", "Fred", "Ralph", "Alex", "Daniel", "Google UK English Male", "Google US English"]
+    : ["Bad News", "Fred", "Alex", "Daniel", "Google UK English Male", "Google US English"];
   for (const preferred of preferredNames) {
     const match = voices.find((voice) => voice.name.includes(preferred));
     if (match) {
@@ -354,7 +371,7 @@ function pickArenaVoice() {
   }
 
   return (
-    voices.find((voice) => /^en[-_]/i.test(voice.lang) && /male|daniel|alex|google/i.test(voice.name)) ||
+    voices.find((voice) => /^en[-_]/i.test(voice.lang) && /bad news|fred|ralph|male|daniel|alex|google/i.test(voice.name)) ||
     voices.find((voice) => /^en[-_]/i.test(voice.lang)) ||
     voices[0]
   );
@@ -367,7 +384,7 @@ function speakLocal(text, mode = "announce") {
   }
 
   const utterance = new SpeechSynthesisUtterance(String(text));
-  const voice = pickArenaVoice();
+  const voice = pickArenaVoice(mode);
 
   if (voice) {
     utterance.voice = voice;
@@ -377,26 +394,21 @@ function speakLocal(text, mode = "announce") {
   }
 
   if (mode === "vote") {
-    utterance.rate = 0.78;
-    utterance.pitch = 0.48;
+    utterance.rate = 0.62;
+    utterance.pitch = 0.24;
+    utterance.volume = 1;
   } else {
-    utterance.rate = 0.9;
-    utterance.pitch = 0.62;
+    utterance.rate = 0.74;
+    utterance.pitch = 0.32;
+    utterance.volume = 1;
   }
 
-  utterance.volume = 1;
   speech.cancel();
   speech.speak(utterance);
 }
 
 function getVoteSpeech(value) {
-  if (value === "?") {
-    return "Need context";
-  }
-  if (value === "THROW") {
-    return "Throw paper";
-  }
-  return getVoteLabel(value);
+  return `${SPEECH_LABELS[value] || getVoteLabel(value)}!`;
 }
 
 function syncCountdownSpeech() {
@@ -414,12 +426,12 @@ function syncCountdownSpeech() {
   state.lastSpokenCountdown = marker;
 
   if (state.finalizingReveal) {
-    speakLocal("Reveal", "announce");
+    speakLocal("Reveal!", "announce");
     return;
   }
 
   if (seconds >= 0 && seconds <= 3) {
-    speakLocal(String(seconds), "announce");
+    speakLocal(SPEECH_LABELS[String(seconds)] || String(seconds), "announce");
   }
 }
 
