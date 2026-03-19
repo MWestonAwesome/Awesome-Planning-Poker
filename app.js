@@ -48,6 +48,7 @@ const STALE_MS = 120000;
 const HEARTBEAT_MS = 25000;
 const REVEAL_COUNTDOWN_MS = 4000;
 const COUNTDOWN_TICK_MS = 250;
+const SPEECH_LANG = "en-GB";
 function normalizeEmail(rawEmail) {
   const email = String(rawEmail || "").toLowerCase().trim();
   if (!email.includes("@")) {
@@ -124,6 +125,8 @@ const state = {
   countdownTimer: null,
   revealAnimationTimer: null,
   revealAnimationUntil: 0,
+  voices: [],
+  lastSpokenCountdown: null,
   finalizingReveal: false,
   busy: false
 };
@@ -324,6 +327,102 @@ function getVoteLabel(value, compact = false) {
   return option.label;
 }
 
+function getSpeech() {
+  return window.speechSynthesis || null;
+}
+
+function loadVoices() {
+  const speech = getSpeech();
+  if (!speech) {
+    return;
+  }
+  state.voices = speech.getVoices();
+}
+
+function pickArenaVoice() {
+  const voices = Array.isArray(state.voices) ? state.voices : [];
+  if (!voices.length) {
+    return null;
+  }
+
+  const preferredNames = ["Daniel", "Google UK English Male", "Google US English", "Alex", "Fred"];
+  for (const preferred of preferredNames) {
+    const match = voices.find((voice) => voice.name.includes(preferred));
+    if (match) {
+      return match;
+    }
+  }
+
+  return (
+    voices.find((voice) => /^en[-_]/i.test(voice.lang) && /male|daniel|alex|google/i.test(voice.name)) ||
+    voices.find((voice) => /^en[-_]/i.test(voice.lang)) ||
+    voices[0]
+  );
+}
+
+function speakLocal(text, mode = "announce") {
+  const speech = getSpeech();
+  if (!speech || !text) {
+    return;
+  }
+
+  const utterance = new SpeechSynthesisUtterance(String(text));
+  const voice = pickArenaVoice();
+
+  if (voice) {
+    utterance.voice = voice;
+    utterance.lang = voice.lang || SPEECH_LANG;
+  } else {
+    utterance.lang = SPEECH_LANG;
+  }
+
+  if (mode === "vote") {
+    utterance.rate = 0.78;
+    utterance.pitch = 0.48;
+  } else {
+    utterance.rate = 0.9;
+    utterance.pitch = 0.62;
+  }
+
+  utterance.volume = 1;
+  speech.cancel();
+  speech.speak(utterance);
+}
+
+function getVoteSpeech(value) {
+  if (value === "?") {
+    return "Need context";
+  }
+  if (value === "THROW") {
+    return "Throw paper";
+  }
+  return getVoteLabel(value);
+}
+
+function syncCountdownSpeech() {
+  if (!isCountdownActive()) {
+    state.lastSpokenCountdown = null;
+    return;
+  }
+
+  const seconds = getCountdownSecondsRemaining();
+  const marker = state.finalizingReveal ? "flip" : String(seconds);
+  if (state.lastSpokenCountdown === marker) {
+    return;
+  }
+
+  state.lastSpokenCountdown = marker;
+
+  if (state.finalizingReveal) {
+    speakLocal("Reveal", "announce");
+    return;
+  }
+
+  if (seconds >= 0 && seconds <= 3) {
+    speakLocal(String(seconds), "announce");
+  }
+}
+
 function getCountdownSecondsRemaining() {
   if (!state.countdownEndsAt) {
     return 0;
@@ -359,12 +458,17 @@ function syncCountdownTicker() {
         });
       }
       renderControls();
+      syncCountdownSpeech();
     }, COUNTDOWN_TICK_MS);
   }
 
   if (!countdownActive && state.countdownTimer) {
     clearInterval(state.countdownTimer);
     state.countdownTimer = null;
+  }
+
+  if (!countdownActive) {
+    state.lastSpokenCountdown = null;
   }
 }
 
@@ -613,6 +717,7 @@ function resetLiveState() {
   state.revealed = false;
   state.countdownEndsAt = 0;
   state.revealAnimationUntil = 0;
+  state.lastSpokenCountdown = null;
   state.round = 1;
   state.hostUid = "";
   state.isHost = false;
@@ -640,6 +745,7 @@ function stopLiveListeners() {
     clearInterval(state.countdownTimer);
     state.countdownTimer = null;
   }
+  state.lastSpokenCountdown = null;
   if (state.revealAnimationTimer) {
     clearTimeout(state.revealAnimationTimer);
     state.revealAnimationTimer = null;
@@ -753,6 +859,7 @@ function subscribeToRoom(roomCode) {
       triggerRevealAnimation();
     }
     syncCountdownTicker();
+    syncCountdownSpeech();
     renderCards();
     renderControls();
 
@@ -841,6 +948,7 @@ async function leaveRoom(signOutAuth = false) {
 async function castVote(value) {
   state.selectedVote = value;
   renderCards();
+  speakLocal(getVoteSpeech(value), "vote");
 
   await setDoc(
     participantRef(),
@@ -1132,6 +1240,12 @@ async function init() {
   const app = initializeApp(firebaseConfig);
   state.auth = getAuth(app);
   state.db = getFirestore(app);
+  loadVoices();
+  if (getSpeech()) {
+    getSpeech().onvoiceschanged = () => {
+      loadVoices();
+    };
+  }
 
   await setPersistence(state.auth, browserSessionPersistence);
 
