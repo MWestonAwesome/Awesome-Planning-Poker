@@ -177,13 +177,33 @@ function getEmailDomain(email) {
   return cleaned.split("@").pop() || "";
 }
 
+function getCandidateEmails(user) {
+  const emails = new Set();
+  const pushEmail = (value) => {
+    const cleaned = normalizeEmail(value);
+    if (cleaned) {
+      emails.add(cleaned);
+    }
+  };
+
+  pushEmail(user?.email || "");
+
+  if (Array.isArray(user?.providerData)) {
+    for (const profile of user.providerData) {
+      pushEmail(profile?.email || "");
+    }
+  }
+
+  return Array.from(emails);
+}
+
 function validateSignedInUser(user) {
   if (!user) {
     return { ok: false, message: "Not signed in." };
   }
 
-  const email = normalizeEmail(user.email || "");
-  if (!email) {
+  const candidateEmails = getCandidateEmails(user);
+  if (candidateEmails.length === 0) {
     return { ok: false, message: "Google account did not provide an email." };
   }
 
@@ -191,18 +211,25 @@ function validateSignedInUser(user) {
     return { ok: true };
   }
 
-  if (ALLOWED_EMAILS.includes(email)) {
-    return { ok: true };
+  for (const email of candidateEmails) {
+    if (ALLOWED_EMAILS.includes(email)) {
+      return { ok: true };
+    }
   }
 
-  const domain = getEmailDomain(email);
-  if (ALLOWED_DOMAINS.includes(domain)) {
-    return { ok: true };
+  for (const email of candidateEmails) {
+    const domain = getEmailDomain(email);
+    if (ALLOWED_DOMAINS.includes(domain)) {
+      return { ok: true };
+    }
   }
 
+  const selectedEmail = candidateEmails[0];
   return {
     ok: false,
-    message: "This app is restricted to approved company or tester accounts."
+    message: selectedEmail
+      ? `Signed into Google as ${selectedEmail}. Use an approved company or tester account.`
+      : "This app is restricted to approved company or tester accounts."
   };
 }
 
