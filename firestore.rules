@@ -8,10 +8,10 @@ service cloud.firestore {
 
     function allowedUser() {
       return signedIn()
-        && request.auth.token.email_verified == true
         && request.auth.token.email != null
         && (
           request.auth.token.email == "jedhfdavidson@gmail.com"
+          || request.auth.token.email == "jedhfdavidson@googlemail.com"
           || request.auth.token.email.matches(".*@intuety\\.io$")
         );
     }
