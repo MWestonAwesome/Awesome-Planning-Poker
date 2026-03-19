@@ -122,6 +122,8 @@ const state = {
   participantUnsub: null,
   heartbeatTimer: null,
   countdownTimer: null,
+  revealAnimationTimer: null,
+  revealAnimationUntil: 0,
   finalizingReveal: false,
   busy: false
 };
@@ -366,6 +368,24 @@ function syncCountdownTicker() {
   }
 }
 
+function triggerRevealAnimation() {
+  state.revealAnimationUntil = Date.now() + 1100;
+
+  if (state.revealAnimationTimer) {
+    clearTimeout(state.revealAnimationTimer);
+  }
+
+  state.revealAnimationTimer = setTimeout(() => {
+    state.revealAnimationUntil = 0;
+    state.revealAnimationTimer = null;
+    renderParticipants();
+  }, 1150);
+}
+
+function isRevealAnimationActive() {
+  return state.revealAnimationUntil > Date.now();
+}
+
 function renderCards() {
   els.cards.innerHTML = "";
 
@@ -500,7 +520,7 @@ function renderParticipants() {
     voteFront.className = "vote-card-face vote-card-front";
 
     const hasVote = hasParticipantVoted(participant);
-    const showFront = !hasVote || state.revealed || participant.uid === state.uid;
+    const showFront = !hasVote || state.revealed;
     const frontValue = document.createElement("span");
     frontValue.className = "vote-card-value";
     frontValue.textContent = hasVote ? getVoteLabel(participant.vote, true) : "Waiting";
@@ -514,7 +534,7 @@ function renderParticipants() {
     } else if (participant.vote === "?") {
       frontLabel.textContent = "Need context";
     } else {
-      frontLabel.textContent = state.revealed || participant.uid === state.uid ? "Revealed" : "Ready";
+      frontLabel.textContent = state.revealed ? "Revealed" : "Ready";
     }
     voteFront.append(frontValue, frontLabel);
 
@@ -537,6 +557,7 @@ function renderParticipants() {
     right.classList.toggle("is-voted", hasVote);
     right.classList.toggle("is-throw", participant.vote === "THROW");
     right.classList.toggle("is-question", participant.vote === "?");
+    right.classList.toggle("is-revealing", state.revealed && hasVote && isRevealAnimationActive());
 
     li.append(left, right);
     els.participants.appendChild(li);
@@ -591,6 +612,7 @@ function resetLiveState() {
   state.selectedVote = null;
   state.revealed = false;
   state.countdownEndsAt = 0;
+  state.revealAnimationUntil = 0;
   state.round = 1;
   state.hostUid = "";
   state.isHost = false;
@@ -617,6 +639,10 @@ function stopLiveListeners() {
   if (state.countdownTimer) {
     clearInterval(state.countdownTimer);
     state.countdownTimer = null;
+  }
+  if (state.revealAnimationTimer) {
+    clearTimeout(state.revealAnimationTimer);
+    state.revealAnimationTimer = null;
   }
 }
 
@@ -713,6 +739,7 @@ function subscribeToRoom(roomCode) {
     }
 
     const room = snap.data();
+    const wasRevealed = state.revealed;
     state.hostUid = room.hostUid || "";
     state.isHost = state.uid === state.hostUid;
     state.round = Number(room.round) || 1;
@@ -721,6 +748,9 @@ function subscribeToRoom(roomCode) {
     if (state.revealed) {
       state.countdownEndsAt = 0;
       state.finalizingReveal = false;
+    }
+    if (!wasRevealed && state.revealed) {
+      triggerRevealAnimation();
     }
     syncCountdownTicker();
     renderCards();
