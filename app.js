@@ -42,6 +42,30 @@ const CARD_OPTIONS = [
   { value: "?", label: "?", detail: "Need context" },
   { value: "THROW", label: "Throw Paper", detail: "Back to refinement" }
 ];
+const TABLE_SEATS = [
+  { seatX: 50, seatY: 7, cardX: 50, cardY: 29 },
+  { seatX: 74, seatY: 15, cardX: 65, cardY: 34 },
+  { seatX: 86, seatY: 33, cardX: 72, cardY: 43 },
+  { seatX: 86, seatY: 58, cardX: 72, cardY: 57 },
+  { seatX: 74, seatY: 76, cardX: 63, cardY: 66 },
+  { seatX: 50, seatY: 85, cardX: 50, cardY: 70 },
+  { seatX: 26, seatY: 76, cardX: 37, cardY: 66 },
+  { seatX: 14, seatY: 58, cardX: 28, cardY: 57 },
+  { seatX: 14, seatY: 33, cardX: 28, cardY: 43 },
+  { seatX: 26, seatY: 15, cardX: 35, cardY: 34 }
+];
+const TABLE_SEAT_MAP = {
+  1: [0],
+  2: [8, 2],
+  3: [9, 0, 1],
+  4: [9, 1, 4, 6],
+  5: [9, 1, 3, 5, 7],
+  6: [9, 1, 2, 4, 6, 8],
+  7: [9, 0, 1, 3, 5, 7, 8],
+  8: [9, 1, 2, 3, 5, 6, 7, 8],
+  9: [0, 1, 2, 3, 4, 5, 6, 7, 8],
+  10: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+};
 const ROOM_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const REQUIRED_CONFIG_KEYS = ["apiKey", "authDomain", "projectId", "storageBucket", "messagingSenderId", "appId"];
 const STALE_MS = 120000;
@@ -676,6 +700,11 @@ function getReadyCounts() {
   };
 }
 
+function getSeatPositions(count) {
+  const map = TABLE_SEAT_MAP[count] || TABLE_SEAT_MAP[10];
+  return map.map((index) => TABLE_SEATS[index]);
+}
+
 function syncCountdownTicker() {
   const countdownActive = isCountdownActive();
 
@@ -816,6 +845,12 @@ function isParticipantOffline(participant) {
 
 function renderParticipants() {
   const list = Array.from(state.participants.values()).sort((a, b) => {
+    if (a.uid === state.hostUid && b.uid !== state.hostUid) {
+      return -1;
+    }
+    if (b.uid === state.hostUid && a.uid !== state.hostUid) {
+      return 1;
+    }
     const aJoined = a.joinedAtMillis ?? Number.MAX_SAFE_INTEGER;
     const bJoined = b.joinedAtMillis ?? Number.MAX_SAFE_INTEGER;
     if (aJoined !== bJoined) {
@@ -826,13 +861,20 @@ function renderParticipants() {
 
   els.participantCount.textContent = `${list.length} total`;
   els.participants.innerHTML = "";
+  const seatPositions = getSeatPositions(Math.min(list.length, 10));
+  els.participants.classList.toggle("participants-table", list.length > 0 && list.length <= 10);
 
-  for (const participant of list) {
+  list.forEach((participant, index) => {
+    const seat = seatPositions[index] || TABLE_SEATS[index % TABLE_SEATS.length];
     const li = document.createElement("li");
-    li.className = "participant";
+    li.className = "participant participant-seat";
+    li.style.setProperty("--seat-x", `${seat.seatX}%`);
+    li.style.setProperty("--seat-y", `${seat.seatY}%`);
+    li.style.setProperty("--card-x", `${seat.cardX}%`);
+    li.style.setProperty("--card-y", `${seat.cardY}%`);
 
     const left = document.createElement("div");
-    left.className = "name";
+    left.className = "seat-label";
 
     const name = document.createElement("span");
     name.textContent = participant.uid === state.uid ? `${participant.name} (you)` : participant.name;
@@ -854,9 +896,6 @@ function renderParticipants() {
 
     const right = document.createElement("span");
     right.className = "vote-card";
-
-    const voteInner = document.createElement("span");
-    voteInner.className = "vote-card-inner";
 
     const voteFront = document.createElement("span");
     voteFront.className = "vote-card-face vote-card-front";
@@ -892,8 +931,7 @@ function renderParticipants() {
     backLabel.textContent = hasVote ? "Hidden vote" : "Waiting";
     voteBack.append(backValue, backLabel);
 
-    voteInner.append(voteFront, voteBack);
-    right.appendChild(voteInner);
+    right.append(voteFront, voteBack);
 
     right.classList.toggle("is-face-up", showFront);
     right.classList.toggle("is-voted", hasVote);
@@ -903,7 +941,7 @@ function renderParticipants() {
 
     li.append(left, right);
     els.participants.appendChild(li);
-  }
+  });
 
   renderSummary(list);
 }
