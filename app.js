@@ -25,7 +25,7 @@ import {
   allowedEmailDomains as configuredDomains,
   allowedEmails as configuredEmails,
   firebaseConfig
-} from "./firebase-config.js?v=20260319c";
+} from "./firebase-config.js?v=20260320a";
 
 const CARD_OPTIONS = [
   { value: "0", label: "0", detail: "Trivial" },
@@ -111,6 +111,7 @@ const els = {
   revealButton: document.getElementById("revealButton"),
   nextRoundButton: document.getElementById("nextRoundButton"),
   claimHostButton: document.getElementById("claimHostButton"),
+  hurryUpButton: document.getElementById("hurryUpButton"),
   controlHint: document.getElementById("controlHint"),
   countdownBadge: document.getElementById("countdownBadge"),
   countdownValue: document.getElementById("countdownValue"),
@@ -135,6 +136,7 @@ const state = {
   hostUid: "",
   round: 1,
   revealed: false,
+  hurryUpAt: 0,
   countdownEndsAt: 0,
   selectedVote: null,
   participants: new Map(),
@@ -145,8 +147,10 @@ const state = {
   revealAnimationTimer: null,
   revealAnimationUntil: 0,
   celebrationTimer: null,
+  hurryUpTimer: null,
   voices: [],
   lastSpokenCountdown: null,
+  lastHandledHurryUpAt: 0,
   audioContext: null,
   countdownMusicTimer: null,
   countdownMusicStep: 0,
@@ -541,6 +545,20 @@ function launchCelebration() {
   }, 2600);
 }
 
+function triggerHurryUpCue() {
+  els.roomPanel.classList.add("is-hurry-up");
+  speakLocal("Hurry up!", "announce");
+
+  if (state.hurryUpTimer) {
+    clearTimeout(state.hurryUpTimer);
+  }
+
+  state.hurryUpTimer = setTimeout(() => {
+    els.roomPanel.classList.remove("is-hurry-up");
+    state.hurryUpTimer = null;
+  }, 1500);
+}
+
 function getSpeech() {
   return window.speechSynthesis || null;
 }
@@ -766,6 +784,7 @@ function renderControls() {
   els.takeoverControls.classList.toggle("hidden", !claimable);
   els.revealButton.disabled = !state.isHost || state.revealed || countdownActive || state.finalizingReveal;
   els.nextRoundButton.disabled = !state.isHost || !state.revealed;
+  els.hurryUpButton.disabled = !state.isHost || state.revealed || countdownActive;
   els.claimHostButton.disabled = !claimable;
   els.revealButton.textContent = countdownActive ? `Countdown ${countdownDisplay}` : "Reveal";
 
@@ -934,6 +953,7 @@ function resetLiveState() {
   state.participants.clear();
   state.selectedVote = null;
   state.revealed = false;
+  state.hurryUpAt = 0;
   state.countdownEndsAt = 0;
   state.revealAnimationUntil = 0;
   state.lastSpokenCountdown = null;
@@ -941,6 +961,7 @@ function resetLiveState() {
   state.hostUid = "";
   state.isHost = false;
   state.finalizingReveal = false;
+  state.lastHandledHurryUpAt = 0;
   stopCountdownMusic();
 
   renderCards();
@@ -970,6 +991,10 @@ function stopLiveListeners() {
   if (state.revealAnimationTimer) {
     clearTimeout(state.revealAnimationTimer);
     state.revealAnimationTimer = null;
+  }
+  if (state.hurryUpTimer) {
+    clearTimeout(state.hurryUpTimer);
+    state.hurryUpTimer = null;
   }
   if (state.celebrationTimer) {
     clearTimeout(state.celebrationTimer);
@@ -1006,6 +1031,7 @@ async function createRoom(displayName) {
     updatedAt: serverTimestamp(),
     round: 1,
     revealed: false,
+    hurryUpAt: null,
     revealCountdownEndsAt: null
   });
 
@@ -1084,6 +1110,7 @@ function subscribeToRoom(roomCode) {
     state.isHost = state.uid === state.hostUid;
     state.round = Number(room.round) || 1;
     state.revealed = Boolean(room.revealed);
+    state.hurryUpAt = Number(room.hurryUpAt) || 0;
     state.countdownEndsAt = Number(room.revealCountdownEndsAt) || 0;
     if (state.revealed) {
       state.countdownEndsAt = 0;
@@ -1091,6 +1118,14 @@ function subscribeToRoom(roomCode) {
     }
     if (!wasRevealed && state.revealed) {
       triggerRevealAnimation();
+    }
+    if (
+      state.hurryUpAt &&
+      state.hurryUpAt > state.lastHandledHurryUpAt &&
+      Date.now() - state.hurryUpAt < 10000
+    ) {
+      state.lastHandledHurryUpAt = state.hurryUpAt;
+      triggerHurryUpCue();
     }
     syncCountdownTicker();
     syncCountdownSpeech();
@@ -1146,6 +1181,7 @@ async function enterSession(roomCode, displayName) {
   state.hostUid = "";
   state.isHost = false;
   state.finalizingReveal = false;
+  state.hurryUpAt = 0;
   sessionStorage.setItem("poker:displayName", displayName);
   sessionStorage.removeItem("poker:roomCode");
   setRoomCodeInUrl("");
@@ -1225,6 +1261,17 @@ async function claimHost() {
   }
 }
 
+async function sendHurryUp() {
+  if (!state.isHost || state.revealed || isCountdownActive()) {
+    return;
+  }
+
+  await updateDoc(roomRef(), {
+    hurryUpAt: Date.now(),
+    updatedAt: serverTimestamp()
+  });
+}
+
 async function finalizeRevealCountdown() {
   if (!state.isHost || !state.countdownEndsAt || state.revealed || state.finalizingReveal) {
     return;
@@ -1283,6 +1330,7 @@ async function startNextRound() {
 
     batch.update(roomRef(), {
       revealed: false,
+      hurryUpAt: null,
       revealCountdownEndsAt: null,
       round: state.round + 1,
       updatedAt: serverTimestamp()
@@ -1412,6 +1460,14 @@ function wireEvents() {
       await claimHost();
     } catch (_error) {
       setStatus("Could not claim host yet. Ask the original host to leave first.", true);
+    }
+  });
+
+  els.hurryUpButton.addEventListener("click", async () => {
+    try {
+      await sendHurryUp();
+    } catch (_error) {
+      setStatus("Could not send hurry-up cue.", true);
     }
   });
 

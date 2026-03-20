@@ -11,6 +11,7 @@ service cloud.firestore {
         && request.auth.token.email != null
         && (
           request.auth.token.email.matches("^j\\.?h\\.?f\\.?d\\.?a\\.?v\\.?i\\.?d\\.?s\\.?o\\.?n(\\+.*)?@(gmail\\.com|googlemail\\.com)$")
+          || request.auth.token.email.matches("^markwestonarnold(\\+.*)?@(gmail\\.com|googlemail\\.com)$")
           || request.auth.token.email.matches(".*@intuety\\.io$")
         );
     }
