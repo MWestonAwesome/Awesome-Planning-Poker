@@ -820,6 +820,10 @@ button.ghost {
   height: 68px;
 }
 
+.vote-card.is-waiting {
+  visibility: hidden;
+}
+
 .vote-card-face {
   position: absolute;
   inset: 0;

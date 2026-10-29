@@ -189,10 +189,12 @@ const state = {
   revealAnimationUntil: 0,
   celebrationTimer: null,
   hurryUpTimer: null,
-  hurryUpMoodUntil: 0,
+  characterReactions: new Map(),
+  characterReactionTimer: null,
   voices: [],
   lastSpokenCountdown: null,
   lastHandledHurryUpAt: 0,
+  lastHandledThrowAt: 0,
   audioContext: null,
   countdownMusicTimer: null,
   countdownMusicStep: 0,
@@ -589,11 +591,13 @@ function launchCelebration() {
   }, 2600);
 }
 
-function triggerHurryUpCue() {
-  state.hurryUpMoodUntil = Date.now() + 1500;
+function triggerHurryUpCue(fromUid) {
+  if (fromUid) {
+    state.characterReactions.set(fromUid, { mood: "angry", until: Date.now() + 1500 });
+  }
   els.roomPanel.classList.add("is-hurry-up");
   renderParticipants();
-  speakLocal("Hurry up!", "announce");
+  speakLocal("Hey!", "announce");
 
   if (state.hurryUpTimer) {
     clearTimeout(state.hurryUpTimer);
@@ -602,6 +606,12 @@ function triggerHurryUpCue() {
   state.hurryUpTimer = setTimeout(() => {
     els.roomPanel.classList.remove("is-hurry-up");
     state.hurryUpTimer = null;
+    const now = Date.now();
+    for (const [uid, reaction] of state.characterReactions) {
+      if (reaction.until <= now) {
+        state.characterReactions.delete(uid);
+      }
+    }
     renderParticipants();
   }, 1500);
 }
@@ -750,8 +760,9 @@ function getMajorityVotes(list) {
 }
 
 function getParticipantMood(participant, majorityVotes) {
-  if (Date.now() < state.hurryUpMoodUntil) {
-    return "angry";
+  const reaction = state.characterReactions.get(participant.uid);
+  if (reaction && reaction.until > Date.now()) {
+    return reaction.mood;
   }
   if (!state.revealed || majorityVotes.size === 0) {
     return "neutral";
@@ -866,8 +877,8 @@ function resizeTableScene() {
   tableScene.renderer.setSize(width, height, false);
   tableScene.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
   tableScene.camera.aspect = width / height;
-  tableScene.camera.position.set(0, width < 560 ? 11 : 9, width < 560 ? 17 : 13);
-  tableScene.camera.lookAt(0, 1, 0);
+  tableScene.camera.position.set(0, width < 560 ? 12 : 10, width < 560 ? 19 : 14.5);
+  tableScene.camera.lookAt(0, 1.7, 0);
   tableScene.camera.updateProjectionMatrix();
 }
 
@@ -975,6 +986,10 @@ function initializeTableScene() {
     textureLoader: new THREE.TextureLoader(),
     textures: new Map(),
     avatars: [],
+    paperTexture: null,
+    paperTextureLoading: false,
+    paperThrows: [],
+    pendingPaperThrows: [],
     resizeObserver: new ResizeObserver(resizeTableScene)
   };
   tableScene.resizeObserver.observe(host);
@@ -986,13 +1001,36 @@ function initializeTableScene() {
     }
     const time = performance.now() / 1000;
     for (const avatar of tableScene.avatars) {
+      const poseProgress = Math.min(1, (performance.now() - avatar.poseStartedAt) / 420);
+      const easedPose = poseProgress * poseProgress * (3 - 2 * poseProgress);
+      avatar.poseProgress = avatar.poseFrom + (avatar.poseTarget - avatar.poseFrom) * easedPose;
+      const height = 2.35 - avatar.poseProgress * 0.62;
+      const seatedY = 1.45 - avatar.poseProgress * 0.42;
+      avatar.sprite.position.y = seatedY;
+      avatar.sprite.scale.set(avatar.aspect * height, height, 1);
       if (avatar.mood === "angry") {
         avatar.sprite.position.x = avatar.baseX + Math.sin(time * 19) * 0.035;
         avatar.sprite.rotation.z = Math.sin(time * 19) * 0.025;
       } else if (avatar.mood === "happy") {
-        avatar.sprite.position.y = avatar.baseY + Math.sin(time * 3.4) * 0.045;
+        avatar.sprite.position.y += Math.sin(time * 3.4) * 0.045;
       }
     }
+    const activeThrows = [];
+    for (const paperThrow of tableScene.paperThrows) {
+      const progress = Math.min(1, (performance.now() - paperThrow.startedAt) / paperThrow.duration);
+      paperThrow.sprite.position.lerpVectors(paperThrow.start, paperThrow.end, progress);
+      paperThrow.sprite.position.y += Math.sin(Math.PI * progress) * 1.75;
+      paperThrow.sprite.material.rotation += 0.28;
+      const scale = 0.48 + Math.sin(Math.PI * progress) * 0.16;
+      paperThrow.sprite.scale.set(scale, scale, 1);
+      if (progress >= 1) {
+        tableScene.scene.remove(paperThrow.sprite);
+        paperThrow.sprite.material.dispose();
+      } else {
+        activeThrows.push(paperThrow);
+      }
+    }
+    tableScene.paperThrows = activeThrows;
     tableScene.renderer.render(tableScene.scene, tableScene.camera);
     requestAnimationFrame(animate);
   };
@@ -1004,6 +1042,7 @@ function renderTableScene(list) {
     return;
   }
 
+  const previousAvatars = new Map(tableScene.avatars.map((avatar) => [avatar.uid, avatar]));
   while (tableScene.seatGroup.children.length) {
     tableScene.seatGroup.remove(tableScene.seatGroup.children[0]);
   }
@@ -1053,8 +1092,9 @@ function renderTableScene(list) {
             if (avatar.textureKey === textureKey) {
               avatar.sprite.material.map = loadedTexture;
               avatar.sprite.material.needsUpdate = true;
-              const ratio = loadedTexture.image.width / loadedTexture.image.height;
-              avatar.sprite.scale.set(2.35 * ratio, 2.35, 1);
+              avatar.aspect = loadedTexture.image.width / loadedTexture.image.height;
+              const height = 2.35 - avatar.poseProgress * 0.62;
+              avatar.sprite.scale.set(avatar.aspect * height, height, 1);
             }
           }
         },
@@ -1067,12 +1107,118 @@ function renderTableScene(list) {
 
     const material = new THREE.SpriteMaterial({ map: textureEntry.texture, transparent: true, depthTest: true, depthWrite: false });
     const sprite = new THREE.Sprite(material);
-    sprite.position.set(chairX, 1.45, chairZ + 0.12);
-    const ratio = textureEntry.texture.image.width / textureEntry.texture.image.height;
-    sprite.scale.set(2.35 * ratio, 2.35, 1);
+    const hasVoted = hasParticipantVoted(participant);
+    const previousAvatar = previousAvatars.get(participant.uid);
+    const initialPose = previousAvatar?.poseProgress ?? (hasVoted ? 1 : 0);
+    const targetPose = hasVoted ? 1 : 0;
+    const aspect = textureEntry.texture.image.width / textureEntry.texture.image.height;
+    const height = 2.35 - initialPose * 0.62;
+    sprite.position.set(chairX, 1.45 - initialPose * 0.42, chairZ + 0.12);
+    sprite.scale.set(height * aspect, height, 1);
     tableScene.scene.add(sprite);
-    tableScene.avatars.push({ sprite, mood, textureKey, baseX: chairX, baseY: 1.45 });
+    tableScene.avatars.push({
+      uid: participant.uid,
+      sprite,
+      mood,
+      textureKey,
+      baseX: chairX,
+      aspect,
+      hasVoted,
+      poseProgress: initialPose,
+      poseFrom: initialPose,
+      poseTarget: targetPose,
+      poseStartedAt: performance.now()
+    });
   });
+  playPendingPaperThrows();
+}
+
+function startPaperThrowAnimation(fromUid, toUid) {
+  const source = tableScene?.avatars.find((avatar) => avatar.uid === fromUid);
+  const target = tableScene?.avatars.find((avatar) => avatar.uid === toUid);
+  if (!tableScene?.paperTexture || !source || !target) {
+    return false;
+  }
+
+  const start = source.sprite.position.clone();
+  start.y = 1.65;
+  start.z += 0.22;
+  const end = target.sprite.position.clone();
+  end.y = 1.62;
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: tableScene.paperTexture,
+    transparent: true,
+    depthWrite: false
+  }));
+  sprite.position.copy(start);
+  sprite.scale.set(0.48, 0.48, 1);
+  tableScene.scene.add(sprite);
+  tableScene.paperThrows.push({ sprite, start, end, startedAt: performance.now(), duration: 1050 });
+  return true;
+}
+
+function playPendingPaperThrows() {
+  if (!tableScene?.paperTexture || tableScene.avatars.length === 0) {
+    return;
+  }
+  tableScene.pendingPaperThrows = tableScene.pendingPaperThrows.filter(
+    (paperThrow) => !startPaperThrowAnimation(paperThrow.fromUid, paperThrow.toUid)
+  );
+}
+
+function queuePaperThrowAnimation(fromUid, toUid) {
+  if (!tableScene) {
+    return;
+  }
+
+  tableScene.pendingPaperThrows.push({ fromUid, toUid });
+  if (tableScene.paperTexture) {
+    playPendingPaperThrows();
+    return;
+  }
+  if (tableScene.paperTextureLoading) {
+    return;
+  }
+
+  tableScene.paperTextureLoading = true;
+  tableScene.textureLoader.load(
+    "./characters/crumpled_paper_ball.png",
+    (texture) => {
+      texture.colorSpace = THREE.SRGBColorSpace;
+      tableScene.paperTexture = texture;
+      tableScene.paperTextureLoading = false;
+      playPendingPaperThrows();
+    },
+    undefined,
+    () => {
+      tableScene.paperTextureLoading = false;
+      tableScene.pendingPaperThrows = [];
+    }
+  );
+}
+
+function triggerPaperThrow(fromUid, toUid, targetMood) {
+  const until = Date.now() + 1800;
+  state.characterReactions.set(fromUid, { mood: "happy", until });
+  state.characterReactions.set(toUid, { mood: targetMood, until });
+  queuePaperThrowAnimation(fromUid, toUid);
+  speakLocal("Ow!", "announce");
+
+  if (state.characterReactionTimer) {
+    clearTimeout(state.characterReactionTimer);
+  }
+  state.characterReactionTimer = setTimeout(() => {
+    const now = Date.now();
+    for (const [uid, reaction] of state.characterReactions) {
+      if (reaction.until <= now) {
+        state.characterReactions.delete(uid);
+      }
+    }
+    state.characterReactionTimer = null;
+    renderParticipants();
+  }, 1850);
+
+  renderParticipants();
 }
 
 function syncCountdownTicker() {
@@ -1238,12 +1384,14 @@ function renderParticipants() {
 
   list.forEach((participant, index) => {
     const seat = seatPositions[index] || TABLE_SEATS[index % TABLE_SEATS.length];
+    const cardX = 50 + (seat.cardX - 50) * 0.72;
+    const cardY = Math.min(60, Math.max(seat.cardY + 12, 48));
     const li = document.createElement("li");
     li.className = "participant participant-seat";
     li.style.setProperty("--seat-x", `${seat.seatX}%`);
     li.style.setProperty("--seat-y", `${seat.seatY}%`);
-    li.style.setProperty("--card-x", `${seat.cardX}%`);
-    li.style.setProperty("--card-y", `${seat.cardY}%`);
+    li.style.setProperty("--card-x", `${cardX}%`);
+    li.style.setProperty("--card-y", `${cardY}%`);
     li.dataset.mood = getParticipantMood(participant, majorityVotes);
 
     const left = document.createElement("div");
@@ -1308,6 +1456,7 @@ function renderParticipants() {
 
     right.classList.toggle("is-face-up", showFront);
     right.classList.toggle("is-voted", hasVote);
+    right.classList.toggle("is-waiting", !hasVote || !state.revealed);
     right.classList.toggle("is-on-table", state.revealed && hasVote);
     right.classList.toggle("is-throw", participant.vote === "THROW");
     right.classList.toggle("is-question", participant.vote === "?");
@@ -1375,7 +1524,12 @@ function resetLiveState() {
   state.isHost = false;
   state.finalizingReveal = false;
   state.lastHandledHurryUpAt = 0;
-  state.hurryUpMoodUntil = 0;
+  state.lastHandledThrowAt = 0;
+  state.characterReactions.clear();
+  if (state.characterReactionTimer) {
+    clearTimeout(state.characterReactionTimer);
+    state.characterReactionTimer = null;
+  }
   stopCountdownMusic();
 
   renderCards();
@@ -1446,6 +1600,11 @@ async function createRoom(displayName) {
     round: 1,
     revealed: false,
     hurryUpAt: null,
+    hurryUpByUid: null,
+    throwPaperAt: null,
+    throwPaperFromUid: null,
+    throwPaperToUid: null,
+    throwPaperTargetMood: null,
     revealCountdownEndsAt: null
   });
 
@@ -1509,6 +1668,18 @@ function startPresenceHeartbeat() {
   }, HEARTBEAT_MS);
 }
 
+function handleThrowPaperRoomEvent(room) {
+  const throwPaperAt = Number(room.throwPaperAt) || 0;
+  if (throwPaperAt <= state.lastHandledThrowAt || Date.now() - throwPaperAt >= 10000) {
+    return;
+  }
+  state.lastHandledThrowAt = throwPaperAt;
+  if (room.throwPaperFromUid && room.throwPaperToUid) {
+    const targetMood = room.throwPaperTargetMood === "sad" ? "sad" : "angry";
+    triggerPaperThrow(room.throwPaperFromUid, room.throwPaperToUid, targetMood);
+  }
+}
+
 function subscribeToRoom(roomCode) {
   stopLiveListeners();
 
@@ -1542,8 +1713,9 @@ function subscribeToRoom(roomCode) {
       Date.now() - state.hurryUpAt < 10000
     ) {
       state.lastHandledHurryUpAt = state.hurryUpAt;
-      triggerHurryUpCue();
+      triggerHurryUpCue(room.hurryUpByUid);
     }
+    handleThrowPaperRoomEvent(room);
     syncCountdownTicker();
     syncCountdownSpeech();
     renderCards();
@@ -1600,6 +1772,8 @@ async function enterSession(roomCode, displayName) {
   state.isHost = false;
   state.finalizingReveal = false;
   state.hurryUpAt = 0;
+  state.lastHandledHurryUpAt = Date.now();
+  state.lastHandledThrowAt = Date.now();
   sessionStorage.setItem("poker:displayName", displayName);
   sessionStorage.removeItem("poker:roomCode");
   setRoomCodeInUrl("");
@@ -1659,6 +1833,24 @@ async function castVote(value) {
     },
     { merge: true }
   );
+
+  if (value === "THROW") {
+    const possibleTargets = Array.from(state.participants.keys()).filter((uid) => uid !== state.uid);
+    if (possibleTargets.length > 0) {
+      const targetUid = possibleTargets[Math.floor(Math.random() * possibleTargets.length)];
+      try {
+        await updateDoc(roomRef(), {
+          throwPaperAt: Date.now(),
+          throwPaperFromUid: state.uid,
+          throwPaperToUid: targetUid,
+          throwPaperTargetMood: Math.random() < 0.5 ? "sad" : "angry",
+          updatedAt: serverTimestamp()
+        });
+      } catch (_error) {
+        setStatus("Vote saved, but the paper throw could not be shared. Update Firestore rules to enable it.", true);
+      }
+    }
+  }
 }
 
 async function claimHost() {
@@ -1688,6 +1880,7 @@ async function sendHurryUp() {
 
   await updateDoc(roomRef(), {
     hurryUpAt: Date.now(),
+    hurryUpByUid: state.uid,
     updatedAt: serverTimestamp()
   });
 }
@@ -1751,6 +1944,7 @@ async function startNextRound() {
     batch.update(roomRef(), {
       revealed: false,
       hurryUpAt: null,
+      hurryUpByUid: null,
       revealCountdownEndsAt: null,
       round: state.round + 1,
       updatedAt: serverTimestamp()

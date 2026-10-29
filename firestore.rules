@@ -31,8 +31,26 @@ service cloud.firestore {
 
     function canSendHurryUp(roomId) {
       return isParticipant(roomId)
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["hurryUpAt", "updatedAt"])
-        && request.resource.data.hurryUpAt is number;
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["hurryUpAt", "hurryUpByUid", "updatedAt"])
+        && request.resource.data.hurryUpAt is number
+        && request.resource.data.hurryUpByUid == request.auth.uid;
+    }
+
+    function canThrowPaper(roomId) {
+      return isParticipant(roomId)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          "throwPaperAt",
+          "throwPaperFromUid",
+          "throwPaperToUid",
+          "throwPaperTargetMood",
+          "updatedAt"
+        ])
+        && request.resource.data.throwPaperAt is number
+        && request.resource.data.throwPaperFromUid == request.auth.uid
+        && request.resource.data.throwPaperToUid is string
+        && request.resource.data.throwPaperToUid != request.auth.uid
+        && exists(/databases/$(database)/documents/rooms/$(roomId)/participants/$(request.resource.data.throwPaperToUid))
+        && request.resource.data.throwPaperTargetMood in ["sad", "angry"];
     }
 
     function previousHostMissing(roomId) {
@@ -55,7 +73,7 @@ service cloud.firestore {
         && request.resource.data.revealed == false
         && request.resource.data.round == 1;
 
-      allow update: if isHost(roomId) || canClaimHost(roomId) || canSendHurryUp(roomId);
+      allow update: if isHost(roomId) || canClaimHost(roomId) || canSendHurryUp(roomId) || canThrowPaper(roomId);
       allow delete: if false;
 
       match /participants/{userId} {
