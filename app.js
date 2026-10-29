@@ -114,6 +114,7 @@ const ALLOWED_EMAILS = Array.isArray(configuredEmails)
 
 const els = {
   status: document.getElementById("status"),
+  heroSection: document.getElementById("heroSection"),
   entryPanel: document.getElementById("entryPanel"),
   entryTitle: document.getElementById("entryTitle"),
   entryHint: document.getElementById("entryHint"),
@@ -1223,6 +1224,7 @@ async function enterSession(roomCode, displayName) {
   sessionStorage.setItem("poker:displayName", displayName);
   sessionStorage.removeItem("poker:roomCode");
   setRoomCodeInUrl("");
+  els.heroSection.classList.add("hidden");
   els.entryPanel.classList.add("hidden");
   els.roomPanel.classList.remove("hidden");
   setStatus("");
@@ -1254,6 +1256,7 @@ async function leaveRoom(signOutAuth = false) {
   setRoomCodeInUrl("");
 
   els.roomPanel.classList.add("hidden");
+  els.heroSection.classList.remove("hidden");
   els.entryPanel.classList.remove("hidden");
   setEntryMode("");
 
