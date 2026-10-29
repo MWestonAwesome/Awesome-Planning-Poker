@@ -24,6 +24,17 @@ service cloud.firestore {
       return allowedUser() && room(roomId).data.hostUid == request.auth.uid;
     }
 
+    function isParticipant(roomId) {
+      return allowedUser()
+        && exists(/databases/$(database)/documents/rooms/$(roomId)/participants/$(request.auth.uid));
+    }
+
+    function canSendHurryUp(roomId) {
+      return isParticipant(roomId)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["hurryUpAt", "updatedAt"])
+        && request.resource.data.hurryUpAt is number;
+    }
+
     function previousHostMissing(roomId) {
       return room(roomId).data.hostUid == null
         || !exists(/databases/$(database)/documents/rooms/$(roomId)/participants/$(room(roomId).data.hostUid));
@@ -44,7 +55,7 @@ service cloud.firestore {
         && request.resource.data.revealed == false
         && request.resource.data.round == 1;
 
-      allow update: if isHost(roomId) || canClaimHost(roomId);
+      allow update: if isHost(roomId) || canClaimHost(roomId) || canSendHurryUp(roomId);
       allow delete: if false;
 
       match /participants/{userId} {
