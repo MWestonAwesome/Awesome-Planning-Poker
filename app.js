@@ -868,6 +868,17 @@ function createFallbackCharacterTexture(characterName, mood) {
   return texture;
 }
 
+function createHeadOnlyTexture(image) {
+  const cropHeight = Math.max(1, Math.round(image.height * 0.56));
+  const canvas = document.createElement("canvas");
+  canvas.width = image.width;
+  canvas.height = cropHeight;
+  canvas.getContext("2d").drawImage(image, 0, 0, image.width, cropHeight, 0, 0, canvas.width, canvas.height);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return texture;
+}
+
 function resizeTableScene() {
   if (!tableScene) {
     return;
@@ -1004,12 +1015,23 @@ function initializeTableScene() {
       const poseProgress = Math.min(1, (performance.now() - avatar.poseStartedAt) / 420);
       const easedPose = poseProgress * poseProgress * (3 - 2 * poseProgress);
       avatar.poseProgress = avatar.poseFrom + (avatar.poseTarget - avatar.poseFrom) * easedPose;
-      const height = 2.35 - avatar.poseProgress * 0.62;
-      const seatedY = 1.45 - avatar.poseProgress * 0.42;
-      avatar.sprite.position.y = seatedY;
+      const isHeadOnly = avatar.poseProgress >= 0.5;
+      if (isHeadOnly !== avatar.isHeadOnly) {
+        avatar.isHeadOnly = isHeadOnly;
+        avatar.sprite.material.map = isHeadOnly ? avatar.headTexture : avatar.fullTexture;
+        avatar.sprite.material.needsUpdate = true;
+        avatar.aspect = isHeadOnly ? avatar.headAspect : avatar.fullAspect;
+      }
+      const height = 2.55 - avatar.poseProgress * 1.6;
+      avatar.currentX = avatar.standingX + (avatar.chairX - avatar.standingX) * avatar.poseProgress;
+      avatar.sprite.position.set(
+        avatar.currentX,
+        1.22 + avatar.poseProgress * 0.73,
+        avatar.standingZ + (avatar.chairZ - avatar.standingZ) * avatar.poseProgress + 0.12
+      );
       avatar.sprite.scale.set(avatar.aspect * height, height, 1);
       if (avatar.mood === "angry") {
-        avatar.sprite.position.x = avatar.baseX + Math.sin(time * 19) * 0.035;
+        avatar.sprite.position.x = avatar.currentX + Math.sin(time * 19) * 0.035;
         avatar.sprite.rotation.z = Math.sin(time * 19) * 0.025;
       } else if (avatar.mood === "happy") {
         avatar.sprite.position.y += Math.sin(time * 3.4) * 0.045;
@@ -1060,6 +1082,12 @@ function renderTableScene(list) {
     const relativeZ = (seat.seatY - 46) / 39;
     const chairX = relativeX * 4.9;
     const chairZ = relativeZ * 3.45;
+    const outward = new THREE.Vector3(chairX / 4.6, 0, chairZ / 3.3).normalize();
+    const frontOrBackSeat = Math.abs(chairZ) > Math.abs(chairX) * 0.75;
+    const standingX = frontOrBackSeat ? chairX : chairX + outward.x * 1.35;
+    const standingZ = frontOrBackSeat
+      ? chairZ + (chairZ < 0 ? -4.8 : 0.75)
+      : chairZ + outward.z * 1.35;
     const chair = new THREE.Group();
     chair.position.set(chairX, 0, chairZ);
     chair.rotation.y = Math.atan2(-chairX, -chairZ);
@@ -1080,20 +1108,31 @@ function renderTableScene(list) {
     const textureKey = `${assetName}:${mood}`;
     let textureEntry = tableScene.textures.get(textureKey);
     if (!textureEntry) {
-      textureEntry = { texture: createFallbackCharacterTexture(participant.characterName, mood), loading: true };
+      const fallbackTexture = createFallbackCharacterTexture(participant.characterName, mood);
+      textureEntry = {
+        texture: fallbackTexture,
+        headTexture: createHeadOnlyTexture(fallbackTexture.image),
+        loading: true
+      };
       tableScene.textures.set(textureKey, textureEntry);
       tableScene.textureLoader.load(
         `./characters/${assetName}/poker_${assetName}_${mood}.png`,
         (loadedTexture) => {
           loadedTexture.colorSpace = THREE.SRGBColorSpace;
           textureEntry.texture = loadedTexture;
+          textureEntry.headTexture = createHeadOnlyTexture(loadedTexture.image);
           textureEntry.loading = false;
           for (const avatar of tableScene?.avatars || []) {
             if (avatar.textureKey === textureKey) {
-              avatar.sprite.material.map = loadedTexture;
+              avatar.fullTexture = loadedTexture;
+              avatar.headTexture = textureEntry.headTexture;
+              avatar.fullAspect = loadedTexture.image.width / loadedTexture.image.height;
+              avatar.headAspect = loadedTexture.image.width / textureEntry.headTexture.image.height;
+              avatar.isHeadOnly = avatar.poseProgress >= 0.5;
+              avatar.sprite.material.map = avatar.isHeadOnly ? avatar.headTexture : avatar.fullTexture;
               avatar.sprite.material.needsUpdate = true;
-              avatar.aspect = loadedTexture.image.width / loadedTexture.image.height;
-              const height = 2.35 - avatar.poseProgress * 0.62;
+              avatar.aspect = avatar.isHeadOnly ? avatar.headAspect : avatar.fullAspect;
+              const height = 2.55 - avatar.poseProgress * 1.6;
               avatar.sprite.scale.set(avatar.aspect * height, height, 1);
             }
           }
@@ -1105,15 +1144,27 @@ function renderTableScene(list) {
       );
     }
 
-    const material = new THREE.SpriteMaterial({ map: textureEntry.texture, transparent: true, depthTest: true, depthWrite: false });
-    const sprite = new THREE.Sprite(material);
     const hasVoted = hasParticipantVoted(participant);
     const previousAvatar = previousAvatars.get(participant.uid);
     const initialPose = previousAvatar?.poseProgress ?? (hasVoted ? 1 : 0);
     const targetPose = hasVoted ? 1 : 0;
-    const aspect = textureEntry.texture.image.width / textureEntry.texture.image.height;
-    const height = 2.35 - initialPose * 0.62;
-    sprite.position.set(chairX, 1.45 - initialPose * 0.42, chairZ + 0.12);
+    const isHeadOnly = initialPose >= 0.5;
+    const fullAspect = textureEntry.texture.image.width / textureEntry.texture.image.height;
+    const headAspect = textureEntry.headTexture.image.width / textureEntry.headTexture.image.height;
+    const aspect = isHeadOnly ? headAspect : fullAspect;
+    const height = 2.55 - initialPose * 1.6;
+    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: isHeadOnly ? textureEntry.headTexture : textureEntry.texture,
+      transparent: true,
+      depthTest: false,
+      depthWrite: false
+    }));
+    sprite.renderOrder = 10;
+    sprite.position.set(
+      standingX + (chairX - standingX) * initialPose,
+      1.22 + initialPose * 0.73,
+      standingZ + (chairZ - standingZ) * initialPose + 0.12
+    );
     sprite.scale.set(height * aspect, height, 1);
     tableScene.scene.add(sprite);
     tableScene.avatars.push({
@@ -1121,8 +1172,17 @@ function renderTableScene(list) {
       sprite,
       mood,
       textureKey,
-      baseX: chairX,
+      fullTexture: textureEntry.texture,
+      headTexture: textureEntry.headTexture,
+      fullAspect,
+      headAspect,
       aspect,
+      isHeadOnly,
+      standingX,
+      standingZ,
+      chairX,
+      chairZ,
+      currentX: standingX + (chairX - standingX) * initialPose,
       hasVoted,
       poseProgress: initialPose,
       poseFrom: initialPose,
