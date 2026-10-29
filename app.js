@@ -26,6 +26,8 @@ import {
   allowedEmails as configuredEmails,
   firebaseConfig
 } from "./firebase-config.js?v=20260320a";
+import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js";
+import { characterNamesByEmail } from "./character-config.js";
 
 const CARD_OPTIONS = [
   { value: "0", label: "0", detail: "Trivial" },
@@ -45,13 +47,13 @@ const CARD_OPTIONS = [
 const TABLE_SEATS = [
   { seatX: 50, seatY: 7, cardX: 50, cardY: 29 },
   { seatX: 74, seatY: 15, cardX: 65, cardY: 34 },
-  { seatX: 86, seatY: 33, cardX: 72, cardY: 43 },
-  { seatX: 86, seatY: 58, cardX: 72, cardY: 57 },
-  { seatX: 74, seatY: 76, cardX: 63, cardY: 66 },
-  { seatX: 50, seatY: 85, cardX: 50, cardY: 70 },
-  { seatX: 26, seatY: 76, cardX: 37, cardY: 66 },
-  { seatX: 14, seatY: 58, cardX: 28, cardY: 57 },
-  { seatX: 14, seatY: 33, cardX: 28, cardY: 43 },
+  { seatX: 86, seatY: 33, cardX: 68, cardY: 43 },
+  { seatX: 86, seatY: 58, cardX: 67, cardY: 52 },
+  { seatX: 74, seatY: 76, cardX: 63, cardY: 57 },
+  { seatX: 50, seatY: 85, cardX: 50, cardY: 56 },
+  { seatX: 26, seatY: 76, cardX: 37, cardY: 57 },
+  { seatX: 14, seatY: 58, cardX: 33, cardY: 52 },
+  { seatX: 14, seatY: 33, cardX: 32, cardY: 43 },
   { seatX: 26, seatY: 15, cardX: 35, cardY: 34 }
 ];
 const TABLE_SEAT_MAP = {
@@ -105,6 +107,17 @@ function normalizeDomain(rawDomain) {
   return domain === "googlemail.com" ? "gmail.com" : domain;
 }
 
+function getCharacterName(email, fallbackName) {
+  const normalizedEmail = normalizeEmail(email);
+  const match = Object.entries(characterNamesByEmail).find(
+    ([key, value]) => normalizeEmail(key) === normalizedEmail || normalizeEmail(value) === normalizedEmail
+  );
+  if (!match) {
+    return sanitizeName(fallbackName || "Participant");
+  }
+  return sanitizeName(normalizeEmail(match[0]) === normalizedEmail ? match[1] : match[0]);
+}
+
 const ALLOWED_DOMAINS = Array.isArray(configuredDomains)
   ? configuredDomains.map((domain) => normalizeDomain(domain)).filter(Boolean)
   : [];
@@ -114,6 +127,9 @@ const ALLOWED_EMAILS = Array.isArray(configuredEmails)
 
 const els = {
   status: document.getElementById("status"),
+  heroSection: document.getElementById("heroSection"),
+  tableStage: document.getElementById("tableStage"),
+  tableScene: document.getElementById("tableScene"),
   entryPanel: document.getElementById("entryPanel"),
   entryTitle: document.getElementById("entryTitle"),
   entryHint: document.getElementById("entryHint"),
@@ -156,6 +172,7 @@ const state = {
   userEmail: "",
   roomCode: "",
   displayName: "",
+  characterName: "",
   isHost: false,
   hostUid: "",
   round: 1,
@@ -172,9 +189,12 @@ const state = {
   revealAnimationUntil: 0,
   celebrationTimer: null,
   hurryUpTimer: null,
+  characterReactions: new Map(),
+  characterReactionTimer: null,
   voices: [],
   lastSpokenCountdown: null,
   lastHandledHurryUpAt: 0,
+  lastHandledThrowAt: 0,
   audioContext: null,
   countdownMusicTimer: null,
   countdownMusicStep: 0,
@@ -182,6 +202,8 @@ const state = {
   finalizingReveal: false,
   busy: false
 };
+
+let tableScene = null;
 
 function setStatus(message, isError = false) {
   if (!message) {
@@ -569,9 +591,13 @@ function launchCelebration() {
   }, 2600);
 }
 
-function triggerHurryUpCue() {
+function triggerHurryUpCue(fromUid) {
+  if (fromUid) {
+    state.characterReactions.set(fromUid, { mood: "angry", until: Date.now() + 1500 });
+  }
   els.roomPanel.classList.add("is-hurry-up");
-  speakLocal("Hurry up!", "announce");
+  renderParticipants();
+  speakLocal("Hey!", "announce");
 
   if (state.hurryUpTimer) {
     clearTimeout(state.hurryUpTimer);
@@ -580,6 +606,13 @@ function triggerHurryUpCue() {
   state.hurryUpTimer = setTimeout(() => {
     els.roomPanel.classList.remove("is-hurry-up");
     state.hurryUpTimer = null;
+    const now = Date.now();
+    for (const [uid, reaction] of state.characterReactions) {
+      if (reaction.until <= now) {
+        state.characterReactions.delete(uid);
+      }
+    }
+    renderParticipants();
   }, 1500);
 }
 
@@ -705,6 +738,489 @@ function getSeatPositions(count) {
   return map.map((index) => TABLE_SEATS[index]);
 }
 
+function getCharacterAssetName(characterName) {
+  return sanitizeName(characterName)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .split("-")
+    .filter(Boolean)
+    .join("-") || "participant";
+}
+
+function getMajorityVotes(list) {
+  const counts = new Map();
+  for (const participant of list) {
+    if (hasParticipantVoted(participant)) {
+      counts.set(participant.vote, (counts.get(participant.vote) || 0) + 1);
+    }
+  }
+
+  const highestCount = Math.max(0, ...counts.values());
+  return new Set(Array.from(counts).filter(([, count]) => count === highestCount).map(([vote]) => vote));
+}
+
+function getParticipantMood(participant, majorityVotes) {
+  const reaction = state.characterReactions.get(participant.uid);
+  if (reaction && reaction.until > Date.now()) {
+    return reaction.mood;
+  }
+  if (!state.revealed || majorityVotes.size === 0) {
+    return "neutral";
+  }
+  return majorityVotes.has(participant.vote) ? "happy" : "sad";
+}
+
+function createFallbackCharacterTexture(characterName, mood) {
+  const canvas = document.createElement("canvas");
+  canvas.width = 256;
+  canvas.height = 320;
+  const context = canvas.getContext("2d");
+  const moodColors = {
+    happy: "#e8b54f",
+    neutral: "#61a9b5",
+    angry: "#d96554",
+    sad: "#7184bb"
+  };
+
+  context.fillStyle = "rgba(255, 255, 255, 0.08)";
+  context.beginPath();
+  context.arc(128, 150, 112, 0, Math.PI * 2);
+  context.fill();
+
+  context.fillStyle = "#172b39";
+  context.beginPath();
+  context.moveTo(32, 320);
+  context.lineTo(48, 260);
+  context.quadraticCurveTo(64, 230, 103, 221);
+  context.lineTo(153, 221);
+  context.quadraticCurveTo(194, 230, 208, 260);
+  context.lineTo(224, 320);
+  context.closePath();
+  context.fill();
+
+  context.fillStyle = "#f4f1e8";
+  context.beginPath();
+  context.moveTo(102, 220);
+  context.lineTo(128, 255);
+  context.lineTo(154, 220);
+  context.closePath();
+  context.fill();
+
+  context.fillStyle = "#d99b72";
+  context.fillRect(112, 190, 32, 44);
+  context.beginPath();
+  context.ellipse(128, 143, 59, 72, 0, 0, Math.PI * 2);
+  context.fill();
+
+  context.fillStyle = "#382b2a";
+  context.beginPath();
+  context.ellipse(128, 93, 62, 33, 0, Math.PI, Math.PI * 2);
+  context.lineTo(184, 129);
+  context.quadraticCurveTo(162, 112, 143, 119);
+  context.quadraticCurveTo(96, 128, 72, 114);
+  context.closePath();
+  context.fill();
+
+  context.strokeStyle = "#30201e";
+  context.lineWidth = 6;
+  context.lineCap = "round";
+  context.beginPath();
+  context.moveTo(91, 137);
+  context.lineTo(108, 139);
+  context.moveTo(148, 139);
+  context.lineTo(165, 137);
+  context.stroke();
+  context.fillStyle = "#30201e";
+  context.beginPath();
+  context.arc(101, 151, 4, 0, Math.PI * 2);
+  context.arc(155, 151, 4, 0, Math.PI * 2);
+  context.fill();
+
+  context.strokeStyle = moodColors[mood];
+  context.lineWidth = 7;
+  context.beginPath();
+  if (mood === "happy") {
+    context.arc(128, 169, 23, 0.12, Math.PI - 0.12);
+  } else if (mood === "sad") {
+    context.arc(128, 193, 21, Math.PI + 0.2, Math.PI * 2 - 0.2);
+  } else if (mood === "angry") {
+    context.moveTo(108, 184);
+    context.lineTo(128, 174);
+    context.lineTo(148, 184);
+  } else {
+    context.moveTo(112, 177);
+    context.lineTo(144, 177);
+  }
+  context.stroke();
+
+  context.fillStyle = moodColors[mood];
+  context.beginPath();
+  context.arc(128, 278, 18, 0, Math.PI * 2);
+  context.fill();
+  context.fillStyle = "#ffffff";
+  context.font = "700 21px sans-serif";
+  context.textAlign = "center";
+  context.textBaseline = "middle";
+  context.fillText(String(characterName || "?").trim().charAt(0).toUpperCase(), 128, 278);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return texture;
+}
+
+function resizeTableScene() {
+  if (!tableScene) {
+    return;
+  }
+  const width = Math.max(1, tableScene.host.clientWidth);
+  const height = Math.max(1, tableScene.host.clientHeight);
+  tableScene.renderer.setSize(width, height, false);
+  tableScene.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  tableScene.camera.aspect = width / height;
+  tableScene.camera.position.set(0, width < 560 ? 12 : 10, width < 560 ? 19 : 14.5);
+  tableScene.camera.lookAt(0, 1.7, 0);
+  tableScene.camera.updateProjectionMatrix();
+}
+
+function initializeTableScene() {
+  const host = els.tableScene;
+  if (!host) {
+    return;
+  }
+
+  let renderer;
+  try {
+    renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+  } catch (_error) {
+    host.classList.add("table-scene-unavailable");
+    return;
+  }
+
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(36, 1, 0.1, 100);
+  const seatGroup = new THREE.Group();
+  scene.add(seatGroup);
+  scene.add(new THREE.HemisphereLight(0xfff1d8, 0x263e43, 2.2));
+
+  const keyLight = new THREE.DirectionalLight(0xffe6bd, 3.2);
+  keyLight.position.set(-5, 11, 8);
+  keyLight.castShadow = true;
+  keyLight.shadow.mapSize.set(1024, 1024);
+  scene.add(keyLight);
+
+  const fillLight = new THREE.PointLight(0x54b8a0, 24, 24);
+  fillLight.position.set(4, 5, -4);
+  scene.add(fillLight);
+
+  const floor = new THREE.Mesh(
+    new THREE.PlaneGeometry(60, 60),
+    new THREE.MeshStandardMaterial({ color: 0x1b2b2d, roughness: 0.94 })
+  );
+  floor.rotation.x = -Math.PI / 2;
+  floor.position.y = -0.08;
+  floor.receiveShadow = true;
+  scene.add(floor);
+
+  const wood = new THREE.MeshStandardMaterial({ color: 0x765034, roughness: 0.36, metalness: 0.04 });
+  const woodEdge = new THREE.MeshStandardMaterial({ color: 0x39271d, roughness: 0.48 });
+  const felt = new THREE.MeshStandardMaterial({ color: 0x17634f, roughness: 0.86 });
+  const brass = new THREE.MeshStandardMaterial({ color: 0xc49b59, metalness: 0.62, roughness: 0.32 });
+  const chairMaterial = new THREE.MeshStandardMaterial({ color: 0x25363a, roughness: 0.58 });
+  const chairSeatMaterial = new THREE.MeshStandardMaterial({ color: 0x6a4835, roughness: 0.75 });
+
+  const tableRim = new THREE.Mesh(new THREE.CylinderGeometry(3.18, 3.32, 0.34, 72), wood);
+  tableRim.scale.x = 1.45;
+  tableRim.position.y = 1.28;
+  tableRim.castShadow = true;
+  tableRim.receiveShadow = true;
+  scene.add(tableRim);
+
+  const tableEdge = new THREE.Mesh(new THREE.CylinderGeometry(3.22, 3.28, 0.4, 72), woodEdge);
+  tableEdge.scale.x = 1.45;
+  tableEdge.position.y = 1.12;
+  tableEdge.castShadow = true;
+  scene.add(tableEdge);
+
+  const tableFelt = new THREE.Mesh(new THREE.CylinderGeometry(2.98, 2.98, 0.08, 72), felt);
+  tableFelt.scale.x = 1.45;
+  tableFelt.position.y = 1.49;
+  tableFelt.receiveShadow = true;
+  scene.add(tableFelt);
+
+  const trim = new THREE.Mesh(new THREE.TorusGeometry(3.05, 0.035, 8, 72), brass);
+  trim.rotation.x = Math.PI / 2;
+  trim.scale.x = 1.45;
+  trim.position.y = 1.48;
+  scene.add(trim);
+
+  const pedestal = new THREE.Mesh(new THREE.CylinderGeometry(0.82, 1.08, 0.94, 24), woodEdge);
+  pedestal.position.y = 0.55;
+  pedestal.castShadow = true;
+  scene.add(pedestal);
+
+  const legGeometry = new THREE.BoxGeometry(0.38, 1.18, 0.44);
+  for (const x of [-3.92, 3.92]) {
+    for (const z of [-2.16, 2.16]) {
+      const leg = new THREE.Mesh(legGeometry, woodEdge);
+      leg.position.set(x, 0.57, z);
+      leg.castShadow = true;
+      scene.add(leg);
+    }
+  }
+
+  renderer.setClearColor(0x000000, 0);
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.domElement.setAttribute("role", "presentation");
+  host.replaceChildren(renderer.domElement);
+
+  tableScene = {
+    host,
+    scene,
+    camera,
+    renderer,
+    seatGroup,
+    chairMaterial,
+    chairSeatMaterial,
+    textureLoader: new THREE.TextureLoader(),
+    textures: new Map(),
+    avatars: [],
+    paperTexture: null,
+    paperTextureLoading: false,
+    paperThrows: [],
+    pendingPaperThrows: [],
+    resizeObserver: new ResizeObserver(resizeTableScene)
+  };
+  tableScene.resizeObserver.observe(host);
+  resizeTableScene();
+
+  const animate = () => {
+    if (!tableScene) {
+      return;
+    }
+    const time = performance.now() / 1000;
+    for (const avatar of tableScene.avatars) {
+      const poseProgress = Math.min(1, (performance.now() - avatar.poseStartedAt) / 420);
+      const easedPose = poseProgress * poseProgress * (3 - 2 * poseProgress);
+      avatar.poseProgress = avatar.poseFrom + (avatar.poseTarget - avatar.poseFrom) * easedPose;
+      const height = 2.35 - avatar.poseProgress * 0.62;
+      const seatedY = 1.45 - avatar.poseProgress * 0.42;
+      avatar.sprite.position.y = seatedY;
+      avatar.sprite.scale.set(avatar.aspect * height, height, 1);
+      if (avatar.mood === "angry") {
+        avatar.sprite.position.x = avatar.baseX + Math.sin(time * 19) * 0.035;
+        avatar.sprite.rotation.z = Math.sin(time * 19) * 0.025;
+      } else if (avatar.mood === "happy") {
+        avatar.sprite.position.y += Math.sin(time * 3.4) * 0.045;
+      }
+    }
+    const activeThrows = [];
+    for (const paperThrow of tableScene.paperThrows) {
+      const progress = Math.min(1, (performance.now() - paperThrow.startedAt) / paperThrow.duration);
+      paperThrow.sprite.position.lerpVectors(paperThrow.start, paperThrow.end, progress);
+      paperThrow.sprite.position.y += Math.sin(Math.PI * progress) * 1.75;
+      paperThrow.sprite.material.rotation += 0.28;
+      const scale = 0.48 + Math.sin(Math.PI * progress) * 0.16;
+      paperThrow.sprite.scale.set(scale, scale, 1);
+      if (progress >= 1) {
+        tableScene.scene.remove(paperThrow.sprite);
+        paperThrow.sprite.material.dispose();
+      } else {
+        activeThrows.push(paperThrow);
+      }
+    }
+    tableScene.paperThrows = activeThrows;
+    tableScene.renderer.render(tableScene.scene, tableScene.camera);
+    requestAnimationFrame(animate);
+  };
+  requestAnimationFrame(animate);
+}
+
+function renderTableScene(list) {
+  if (!tableScene) {
+    return;
+  }
+
+  const previousAvatars = new Map(tableScene.avatars.map((avatar) => [avatar.uid, avatar]));
+  while (tableScene.seatGroup.children.length) {
+    tableScene.seatGroup.remove(tableScene.seatGroup.children[0]);
+  }
+  for (const avatar of tableScene.avatars) {
+    tableScene.scene.remove(avatar.sprite);
+    avatar.sprite.material.dispose();
+  }
+  tableScene.avatars = [];
+
+  const seatPositions = getSeatPositions(Math.min(list.length, 10));
+  const majorityVotes = getMajorityVotes(list);
+  list.slice(0, 10).forEach((participant, index) => {
+    const seat = seatPositions[index] || TABLE_SEATS[index % TABLE_SEATS.length];
+    const relativeX = (seat.seatX - 50) / 36;
+    const relativeZ = (seat.seatY - 46) / 39;
+    const chairX = relativeX * 4.9;
+    const chairZ = relativeZ * 3.45;
+    const chair = new THREE.Group();
+    chair.position.set(chairX, 0, chairZ);
+    chair.rotation.y = Math.atan2(-chairX, -chairZ);
+
+    const chairSeat = new THREE.Mesh(new THREE.BoxGeometry(0.94, 0.18, 0.82), tableScene.chairSeatMaterial);
+    chairSeat.position.y = 0.72;
+    chairSeat.castShadow = true;
+    chair.add(chairSeat);
+
+    const chairBack = new THREE.Mesh(new THREE.BoxGeometry(0.94, 0.92, 0.18), tableScene.chairMaterial);
+    chairBack.position.set(0, 1.2, -0.34);
+    chairBack.castShadow = true;
+    chair.add(chairBack);
+    tableScene.seatGroup.add(chair);
+
+    const mood = getParticipantMood(participant, majorityVotes);
+    const assetName = getCharacterAssetName(participant.characterName);
+    const textureKey = `${assetName}:${mood}`;
+    let textureEntry = tableScene.textures.get(textureKey);
+    if (!textureEntry) {
+      textureEntry = { texture: createFallbackCharacterTexture(participant.characterName, mood), loading: true };
+      tableScene.textures.set(textureKey, textureEntry);
+      tableScene.textureLoader.load(
+        `./characters/${assetName}/poker_${assetName}_${mood}.png`,
+        (loadedTexture) => {
+          loadedTexture.colorSpace = THREE.SRGBColorSpace;
+          textureEntry.texture = loadedTexture;
+          textureEntry.loading = false;
+          for (const avatar of tableScene?.avatars || []) {
+            if (avatar.textureKey === textureKey) {
+              avatar.sprite.material.map = loadedTexture;
+              avatar.sprite.material.needsUpdate = true;
+              avatar.aspect = loadedTexture.image.width / loadedTexture.image.height;
+              const height = 2.35 - avatar.poseProgress * 0.62;
+              avatar.sprite.scale.set(avatar.aspect * height, height, 1);
+            }
+          }
+        },
+        undefined,
+        () => {
+          textureEntry.loading = false;
+        }
+      );
+    }
+
+    const material = new THREE.SpriteMaterial({ map: textureEntry.texture, transparent: true, depthTest: true, depthWrite: false });
+    const sprite = new THREE.Sprite(material);
+    const hasVoted = hasParticipantVoted(participant);
+    const previousAvatar = previousAvatars.get(participant.uid);
+    const initialPose = previousAvatar?.poseProgress ?? (hasVoted ? 1 : 0);
+    const targetPose = hasVoted ? 1 : 0;
+    const aspect = textureEntry.texture.image.width / textureEntry.texture.image.height;
+    const height = 2.35 - initialPose * 0.62;
+    sprite.position.set(chairX, 1.45 - initialPose * 0.42, chairZ + 0.12);
+    sprite.scale.set(height * aspect, height, 1);
+    tableScene.scene.add(sprite);
+    tableScene.avatars.push({
+      uid: participant.uid,
+      sprite,
+      mood,
+      textureKey,
+      baseX: chairX,
+      aspect,
+      hasVoted,
+      poseProgress: initialPose,
+      poseFrom: initialPose,
+      poseTarget: targetPose,
+      poseStartedAt: performance.now()
+    });
+  });
+  playPendingPaperThrows();
+}
+
+function startPaperThrowAnimation(fromUid, toUid) {
+  const source = tableScene?.avatars.find((avatar) => avatar.uid === fromUid);
+  const target = tableScene?.avatars.find((avatar) => avatar.uid === toUid);
+  if (!tableScene?.paperTexture || !source || !target) {
+    return false;
+  }
+
+  const start = source.sprite.position.clone();
+  start.y = 1.65;
+  start.z += 0.22;
+  const end = target.sprite.position.clone();
+  end.y = 1.62;
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: tableScene.paperTexture,
+    transparent: true,
+    depthWrite: false
+  }));
+  sprite.position.copy(start);
+  sprite.scale.set(0.48, 0.48, 1);
+  tableScene.scene.add(sprite);
+  tableScene.paperThrows.push({ sprite, start, end, startedAt: performance.now(), duration: 1050 });
+  return true;
+}
+
+function playPendingPaperThrows() {
+  if (!tableScene?.paperTexture || tableScene.avatars.length === 0) {
+    return;
+  }
+  tableScene.pendingPaperThrows = tableScene.pendingPaperThrows.filter(
+    (paperThrow) => !startPaperThrowAnimation(paperThrow.fromUid, paperThrow.toUid)
+  );
+}
+
+function queuePaperThrowAnimation(fromUid, toUid) {
+  if (!tableScene) {
+    return;
+  }
+
+  tableScene.pendingPaperThrows.push({ fromUid, toUid });
+  if (tableScene.paperTexture) {
+    playPendingPaperThrows();
+    return;
+  }
+  if (tableScene.paperTextureLoading) {
+    return;
+  }
+
+  tableScene.paperTextureLoading = true;
+  tableScene.textureLoader.load(
+    "./characters/crumpled_paper_ball.png",
+    (texture) => {
+      texture.colorSpace = THREE.SRGBColorSpace;
+      tableScene.paperTexture = texture;
+      tableScene.paperTextureLoading = false;
+      playPendingPaperThrows();
+    },
+    undefined,
+    () => {
+      tableScene.paperTextureLoading = false;
+      tableScene.pendingPaperThrows = [];
+    }
+  );
+}
+
+function triggerPaperThrow(fromUid, toUid, targetMood) {
+  const until = Date.now() + 1800;
+  state.characterReactions.set(fromUid, { mood: "happy", until });
+  state.characterReactions.set(toUid, { mood: targetMood, until });
+  queuePaperThrowAnimation(fromUid, toUid);
+  speakLocal("Ow!", "announce");
+
+  if (state.characterReactionTimer) {
+    clearTimeout(state.characterReactionTimer);
+  }
+  state.characterReactionTimer = setTimeout(() => {
+    const now = Date.now();
+    for (const [uid, reaction] of state.characterReactions) {
+      if (reaction.until <= now) {
+        state.characterReactions.delete(uid);
+      }
+    }
+    state.characterReactionTimer = null;
+    renderParticipants();
+  }, 1850);
+
+  renderParticipants();
+}
+
 function syncCountdownTicker() {
   const countdownActive = isCountdownActive();
 
@@ -813,7 +1329,7 @@ function renderControls() {
   els.takeoverControls.classList.toggle("hidden", !claimable);
   els.revealButton.disabled = !state.isHost || state.revealed || countdownActive || state.finalizingReveal;
   els.nextRoundButton.disabled = !state.isHost || !state.revealed;
-  els.hurryUpButton.disabled = !state.isHost || state.revealed || countdownActive;
+  els.hurryUpButton.disabled = !state.roomCode || state.revealed || countdownActive;
   els.claimHostButton.disabled = !claimable;
   els.revealButton.textContent = countdownActive ? `Countdown ${countdownDisplay}` : "Reveal";
 
@@ -862,16 +1378,21 @@ function renderParticipants() {
   els.participantCount.textContent = `${list.length} total`;
   els.participants.innerHTML = "";
   const seatPositions = getSeatPositions(Math.min(list.length, 10));
+  const majorityVotes = getMajorityVotes(list);
   els.participants.classList.toggle("participants-table", list.length > 0 && list.length <= 10);
+  els.tableStage.classList.toggle("table-stage-empty", list.length === 0);
 
   list.forEach((participant, index) => {
     const seat = seatPositions[index] || TABLE_SEATS[index % TABLE_SEATS.length];
+    const cardX = 50 + (seat.cardX - 50) * 0.72;
+    const cardY = Math.min(60, Math.max(seat.cardY + 12, 48));
     const li = document.createElement("li");
     li.className = "participant participant-seat";
     li.style.setProperty("--seat-x", `${seat.seatX}%`);
     li.style.setProperty("--seat-y", `${seat.seatY}%`);
-    li.style.setProperty("--card-x", `${seat.cardX}%`);
-    li.style.setProperty("--card-y", `${seat.cardY}%`);
+    li.style.setProperty("--card-x", `${cardX}%`);
+    li.style.setProperty("--card-y", `${cardY}%`);
+    li.dataset.mood = getParticipantMood(participant, majorityVotes);
 
     const left = document.createElement("div");
     left.className = "seat-label";
@@ -935,6 +1456,8 @@ function renderParticipants() {
 
     right.classList.toggle("is-face-up", showFront);
     right.classList.toggle("is-voted", hasVote);
+    right.classList.toggle("is-waiting", !hasVote || !state.revealed);
+    right.classList.toggle("is-on-table", state.revealed && hasVote);
     right.classList.toggle("is-throw", participant.vote === "THROW");
     right.classList.toggle("is-question", participant.vote === "?");
     right.classList.toggle("is-revealing", state.revealed && hasVote && isRevealAnimationActive());
@@ -943,6 +1466,7 @@ function renderParticipants() {
     els.participants.appendChild(li);
   });
 
+  renderTableScene(list);
   renderSummary(list);
 }
 
@@ -1000,6 +1524,12 @@ function resetLiveState() {
   state.isHost = false;
   state.finalizingReveal = false;
   state.lastHandledHurryUpAt = 0;
+  state.lastHandledThrowAt = 0;
+  state.characterReactions.clear();
+  if (state.characterReactionTimer) {
+    clearTimeout(state.characterReactionTimer);
+    state.characterReactionTimer = null;
+  }
   stopCountdownMusic();
 
   renderCards();
@@ -1070,12 +1600,18 @@ async function createRoom(displayName) {
     round: 1,
     revealed: false,
     hurryUpAt: null,
+    hurryUpByUid: null,
+    throwPaperAt: null,
+    throwPaperFromUid: null,
+    throwPaperToUid: null,
+    throwPaperTargetMood: null,
     revealCountdownEndsAt: null
   });
 
   await setDoc(participantRef(state.uid, code), {
     uid: state.uid,
     name: displayName,
+    characterName: state.characterName,
     vote: null,
     joinedAt: serverTimestamp(),
     lastActive: serverTimestamp()
@@ -1095,6 +1631,7 @@ async function joinRoom(roomCode, displayName) {
     {
       uid: state.uid,
       name: displayName,
+      characterName: state.characterName,
       joinedAt: serverTimestamp(),
       lastActive: serverTimestamp()
     },
@@ -1112,6 +1649,7 @@ async function touchPresence() {
     {
       uid: state.uid,
       name: state.displayName,
+      characterName: state.characterName,
       lastActive: serverTimestamp()
     },
     { merge: true }
@@ -1128,6 +1666,18 @@ function startPresenceHeartbeat() {
       // Ignore intermittent network issues; next heartbeat will retry.
     });
   }, HEARTBEAT_MS);
+}
+
+function handleThrowPaperRoomEvent(room) {
+  const throwPaperAt = Number(room.throwPaperAt) || 0;
+  if (throwPaperAt <= state.lastHandledThrowAt || Date.now() - throwPaperAt >= 10000) {
+    return;
+  }
+  state.lastHandledThrowAt = throwPaperAt;
+  if (room.throwPaperFromUid && room.throwPaperToUid) {
+    const targetMood = room.throwPaperTargetMood === "sad" ? "sad" : "angry";
+    triggerPaperThrow(room.throwPaperFromUid, room.throwPaperToUid, targetMood);
+  }
 }
 
 function subscribeToRoom(roomCode) {
@@ -1163,8 +1713,9 @@ function subscribeToRoom(roomCode) {
       Date.now() - state.hurryUpAt < 10000
     ) {
       state.lastHandledHurryUpAt = state.hurryUpAt;
-      triggerHurryUpCue();
+      triggerHurryUpCue(room.hurryUpByUid);
     }
+    handleThrowPaperRoomEvent(room);
     syncCountdownTicker();
     syncCountdownSpeech();
     renderCards();
@@ -1189,6 +1740,7 @@ function subscribeToRoom(roomCode) {
       state.participants.set(participantDoc.id, {
         uid: participant.uid || participantDoc.id,
         name: participant.name || "Unnamed",
+        characterName: participant.characterName || participant.name || "Participant",
         vote: participant.vote ?? null,
         lastActiveMillis,
         joinedAtMillis
@@ -1220,9 +1772,12 @@ async function enterSession(roomCode, displayName) {
   state.isHost = false;
   state.finalizingReveal = false;
   state.hurryUpAt = 0;
+  state.lastHandledHurryUpAt = Date.now();
+  state.lastHandledThrowAt = Date.now();
   sessionStorage.setItem("poker:displayName", displayName);
   sessionStorage.removeItem("poker:roomCode");
   setRoomCodeInUrl("");
+  els.heroSection.classList.add("hidden");
   els.entryPanel.classList.add("hidden");
   els.roomPanel.classList.remove("hidden");
   setStatus("");
@@ -1254,6 +1809,7 @@ async function leaveRoom(signOutAuth = false) {
   setRoomCodeInUrl("");
 
   els.roomPanel.classList.add("hidden");
+  els.heroSection.classList.remove("hidden");
   els.entryPanel.classList.remove("hidden");
   setEntryMode("");
 
@@ -1277,6 +1833,24 @@ async function castVote(value) {
     },
     { merge: true }
   );
+
+  if (value === "THROW") {
+    const possibleTargets = Array.from(state.participants.keys()).filter((uid) => uid !== state.uid);
+    if (possibleTargets.length > 0) {
+      const targetUid = possibleTargets[Math.floor(Math.random() * possibleTargets.length)];
+      try {
+        await updateDoc(roomRef(), {
+          throwPaperAt: Date.now(),
+          throwPaperFromUid: state.uid,
+          throwPaperToUid: targetUid,
+          throwPaperTargetMood: Math.random() < 0.5 ? "sad" : "angry",
+          updatedAt: serverTimestamp()
+        });
+      } catch (_error) {
+        setStatus("Vote saved, but the paper throw could not be shared. Update Firestore rules to enable it.", true);
+      }
+    }
+  }
 }
 
 async function claimHost() {
@@ -1300,12 +1874,13 @@ async function claimHost() {
 }
 
 async function sendHurryUp() {
-  if (!state.isHost || state.revealed || isCountdownActive()) {
+  if (!state.roomCode || state.revealed || isCountdownActive()) {
     return;
   }
 
   await updateDoc(roomRef(), {
     hurryUpAt: Date.now(),
+    hurryUpByUid: state.uid,
     updatedAt: serverTimestamp()
   });
 }
@@ -1369,6 +1944,7 @@ async function startNextRound() {
     batch.update(roomRef(), {
       revealed: false,
       hurryUpAt: null,
+      hurryUpByUid: null,
       revealCountdownEndsAt: null,
       round: state.round + 1,
       updatedAt: serverTimestamp()
@@ -1556,6 +2132,7 @@ function wireAuthState() {
       state.uid = "";
       state.userEmail = "";
       state.displayName = "";
+      state.characterName = "";
       sessionStorage.removeItem("poker:displayName");
 
       setEntryMode(roomCodeFromUrl);
@@ -1572,6 +2149,7 @@ function wireAuthState() {
     state.uid = user.uid;
     state.userEmail = String(user.email || "").toLowerCase().trim();
     state.displayName = getUserDisplayName(user);
+    state.characterName = getCharacterName(state.userEmail, state.displayName);
     sessionStorage.setItem("poker:displayName", state.displayName);
 
     setEntryMode(roomCodeFromUrl);
@@ -1601,6 +2179,7 @@ async function init() {
 
   await setPersistence(state.auth, browserSessionPersistence);
 
+  initializeTableScene();
   wireEvents();
   wireAuthState();
   setEntryMode(getRoomCodeFromUrl());

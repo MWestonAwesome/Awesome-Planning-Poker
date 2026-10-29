@@ -16,7 +16,7 @@
     <div id="celebrationLights" class="celebration-lights hidden" aria-hidden="true"></div>
     <div id="confettiBurst" class="confetti-burst hidden" aria-hidden="true"></div>
     <main class="app-shell">
-      <section class="hero">
+      <section id="heroSection" class="hero">
         <div class="hero-copy">
           <div class="hero-blasts" aria-hidden="true">
             <span class="blast blast-coral"></span>
@@ -83,10 +83,12 @@
         </header>
 
         <section class="controls">
-          <div id="hostControls" class="host-controls hidden">
+          <div class="session-actions">
             <button id="hurryUpButton" type="button" class="ghost accent-ghost">Hurry Up</button>
-            <button id="revealButton" type="button">Reveal</button>
-            <button id="nextRoundButton" type="button" class="secondary">New Round</button>
+            <div id="hostControls" class="host-controls hidden">
+              <button id="revealButton" type="button">Reveal</button>
+              <button id="nextRoundButton" type="button" class="secondary">New Round</button>
+            </div>
           </div>
           <div id="takeoverControls" class="host-controls hidden">
             <button id="claimHostButton" type="button" class="secondary">Claim Host</button>
@@ -107,7 +109,10 @@
             <h3>Participants</h3>
             <span id="participantCount">0</span>
           </div>
-          <ul id="participants" class="participants"></ul>
+          <div id="tableStage" class="table-stage">
+            <div id="tableScene" class="table-scene" aria-hidden="true"></div>
+            <ul id="participants" class="participants"></ul>
+          </div>
         </section>
 
         <section id="summary" class="summary hidden"></section>
